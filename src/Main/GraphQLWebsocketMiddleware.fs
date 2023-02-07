@@ -109,14 +109,18 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
     let safe_AddClientSubscription = addClientSubscription cancellationToken
 
     let send = safe_SendMessageViaSocket socket
-    let receive() = socket |> safe_ReceiveMessageViaSocket executor Map.empty
+    let receive() =
+      socket
+      |> safe_ReceiveMessageViaSocket executor Map.empty
 
     let sendQueryOutput id output =
       task { do! send (Next (id, output)) }
     let sendQueryOutputDelayedBy (ms: int) id output =
       task {
-            do! Async.Sleep ms |> Async.StartAsTask
-            do! output |> sendQueryOutput id
+            do! Async.Sleep ms
+                |> Async.StartAsTask
+            do! output
+                |> sendQueryOutput id
         }
 
     let applyPlanExecutionResult (id: string) (executionResult: GQLResponse)  =
@@ -126,11 +130,13 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
                 do! observableOutput
                     |> safe_AddClientSubscription id sendQueryOutput
             | Deferred (data, _, observableOutput) ->
-                do! data |> sendQueryOutput id
+                do! data
+                    |> sendQueryOutput id
                 do! observableOutput
                     |> safe_AddClientSubscription id (sendQueryOutputDelayedBy 5000)
             | Direct (data, _) ->
-                do! data |> sendQueryOutput id
+                do! data
+                    |> sendQueryOutput id
         }
 
     let getStrAddendumOfOptionalPayload optionalPayload =
