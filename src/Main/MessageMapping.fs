@@ -1,14 +1,14 @@
 namespace GraphQLTransportWS
 
-module GraphQLWsMessageRawMapping =
+module MessageMapping =
   open FSharp.Data.GraphQL
 
-  let requireId (raw : GraphQLWsMessageRaw) : string =
+  let requireId (raw : RawMessage) : string =
     match raw.Id with
     | Some s -> s
     | None -> failwith "property \"id\" is required but was not there"
 
-  let requirePayloadToBeAnOptionalString (payload : GraphQLWsMessagePayloadRaw option) : string option =
+  let requirePayloadToBeAnOptionalString (payload : RawPayload option) : string option =
     match payload with
     | Some p  ->
       match p with
@@ -16,7 +16,7 @@ module GraphQLWsMessageRawMapping =
       | _ -> failwith "payload was expected to be a string, but it wasn't"
     | None -> None
 
-  let requireSubscribePayload (executor : Executor<'a>) (payload : GraphQLWsMessagePayloadRaw option) : GraphQLQuery =
+  let requireSubscribePayload (executor : Executor<'a>) (payload : RawPayload option) : GraphQLQuery =
     match payload with
     | Some p ->
       match p with
@@ -32,7 +32,7 @@ module GraphQLWsMessageRawMapping =
     | None ->
       failwith "payload is required for this message, but none was available"
 
-  let toWebSocketClientMessage (executor : Executor<'a>) (raw : GraphQLWsMessageRaw) : WebSocketClientMessage =
+  let toClientMessage (executor : Executor<'a>) (raw : RawMessage) : ClientMessage =
     match raw.Type with
     | None ->
       failwithf "property \"type\" was not found in the client message"

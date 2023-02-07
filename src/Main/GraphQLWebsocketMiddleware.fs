@@ -88,7 +88,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         return Some deserializedMsg
     }
 
-  let sendMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (socket : WebSocket) (message : WebSocketServerMessage) =
+  let sendMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (socket : WebSocket) (message : ServerMessage) =
     task {
       if not (socket.State = WebSocketState.Open) then
         printfn "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State

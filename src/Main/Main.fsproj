@@ -12,12 +12,11 @@
   <ItemGroup>
     <Compile Include="Rop/Rop.fs" />
     <Compile Include="Rop/RopAsync.fs" />
-    <Compile Include="WebSocketMessages.fs" />
-    <Compile Include="WebSocketMessagesMappers.fs" />
+    <Compile Include="Messages.fs" />
+    <Compile Include="MessageMapping.fs" />
     <Compile Include="GraphQLWebsocketMiddlewareOptions.fs" />
-    <Compile Include="JsonConverters.fs" />
+    <Compile Include="RawMessageConverter.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />
-    <Compile Include="Library.fs" />
   </ItemGroup>
 
   <ItemGroup>
