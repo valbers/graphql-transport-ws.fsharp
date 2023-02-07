@@ -83,3 +83,34 @@ type RawMessageConverter() =
 
   override __.Write(writer : Utf8JsonWriter, value : RawMessage, options : JsonSerializerOptions) =
     failwith "serializing a WebSocketClientMessage is not supported (yet(?))"
+
+[<Sealed>]
+type RawServerMessageConverter() =
+  inherit JsonConverter<RawServerMessage>()
+
+  override __.Read(reader : byref<Utf8JsonReader>, typeToConvert: Type, options : JsonSerializerOptions) : RawServerMessage =
+    failwith "deserializing a RawServerMessage is not supported (yet(?))"
+
+  override __.Write(writer : Utf8JsonWriter, value : RawServerMessage, options : JsonSerializerOptions) =
+    writer.WriteStartObject()
+    writer.WriteString("type", value.Type)
+    match value.Id with
+    | None ->
+      ()
+    | Some id ->
+      writer.WriteString("id", id)
+    
+    match value.Payload with
+    | None ->
+      ()
+    | Some serverRawPayload ->
+      match serverRawPayload with
+      | ServerStringPayload payload ->
+        writer.WriteString("payload", payload)
+      | ExecutionResult output ->
+        writer.WritePropertyName("payload")
+        JsonSerializer.Serialize(writer, output, options)
+      | ErrorMessages msgs ->
+        writer.WriteString("payload", String.Join("; ", msgs))
+
+    writer.WriteEndObject()

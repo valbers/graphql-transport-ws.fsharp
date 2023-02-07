@@ -25,7 +25,7 @@ type ServerRawPayload =
 
 type RawServerMessage =
     { Id : string option
-      Type : string option
+      Type : string
       Payload : ServerRawPayload option }
 
 type GraphQLQuery =
@@ -53,5 +53,6 @@ type ServerMessage =
 module CustomWebSocketStatus =
     let invalidMessage = 4400
     let unauthorized = 4401
+    let connectionTimeout = 4408
     let subscriberAlreadyExists = 4409
     let tooManyInitializationRequests = 4429
