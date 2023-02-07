@@ -204,9 +204,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
           let cancellationToken =
             (CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, applicationLifetime.ApplicationStopping).Token)
+          let safe_HandleMessages = handleMessages cancellationToken
           try
             do! socket
-                |> handleMessages cancellationToken executor root
+                |> safe_HandleMessages executor root
           with
             | ex ->
               printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
