@@ -18,6 +18,16 @@ type RawMessage =
       Type : string option
       Payload : RawPayload option }
 
+type ServerRawPayload =
+    | ServerStringPayload of string
+    | ExecutionResult of Output
+    | ErrorMessages of string list
+
+type RawServerMessage =
+    { Id : string option
+      Type : string option
+      Payload : ServerRawPayload option }
+
 type GraphQLQuery =
     { ExecutionPlan : ExecutionPlan
       Variables : Map<string, obj> }
@@ -34,8 +44,8 @@ type ClientMessageProtocolFailure =
 
 type ServerMessage =
     | ConnectionAck
-    | ServerPing of payload: string option
-    | ServerPong of payload: string option
+    | ServerPing
+    | ServerPong
     | Next of id : string * payload : Output
     | Error of id : string * err : string list
     | Complete of id : string

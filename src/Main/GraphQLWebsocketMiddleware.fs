@@ -46,8 +46,36 @@ module internal GraphQLSubscriptionsManagement =
 
 type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, jsonOptions : IOptions<JsonOptions>, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
-  let serializeServerMessage (jsonOptions: JsonOptions) serverMessage =
-      task { return "dummySerializedServerMessage" }
+  let serializeServerMessage (jsonOptions: JsonOptions) (serverMessage : ServerMessage) =
+      task {
+        let raw =
+          match serverMessage with
+          | ConnectionAck ->
+            { Id = None
+              Type = Some "connection_ack"
+              Payload = None }
+          | ServerPing ->
+            { Id = None
+              Type = Some "ping"
+              Payload = None }
+          | ServerPong ->
+            { Id = None
+              Type = Some "pong"
+              Payload = None }
+          | Next (id, payload) ->
+            { Id = Some id
+              Type = Some "next"
+              Payload = Some <| ExecutionResult payload }
+          | Complete id ->
+            { Id = Some id
+              Type = Some "complete"
+              Payload = None }
+          | Error (id, errMsgs) ->
+            { Id = Some id
+              Type = Some "error"
+              Payload = Some <| ErrorMessages errMsgs }
+        return JsonSerializer.Serialize(raw, jsonOptions.SerializerOptions)
+      }
 
   let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
     task {
@@ -213,7 +241,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                     do! ConnectionAck |> safe_Send
                 | Success (ClientPing p, _) ->
                     "ClientPing" |> logMsgReceivedWithOptionalPayload p
-                    do! ServerPong None |> safe_Send
+                    do! ServerPong |> safe_Send
                 | Success (ClientPong p, _) ->
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
                 | Success (Subscribe (id, query), _) ->
