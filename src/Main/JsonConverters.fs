@@ -9,9 +9,10 @@ type WebSocketServerMessageConverter() =
   inherit JsonConverter<WebSocketServerMessage>()
 
   override  __.Read(reader: byref<Utf8JsonReader>, typeToConvert: Type, options: JsonSerializerOptions) =
-    ConnectionAck
+    failwith "deserializing a WebSocketServerMessage is not supported (yet(?))"
 
   override __.Write(writer: Utf8JsonWriter, value: WebSocketServerMessage, options: JsonSerializerOptions) =
+    let serializeAny x = JsonSerializer.Serialize(x, options)
     let thenAddProperty (propName: string) (propStrValue: string) =
       writer.WritePropertyName(propName)
       writer.WriteStringValue(propStrValue)
@@ -60,7 +61,7 @@ type WebSocketServerMessageConverter() =
         beginSerializedObjWith "type" "next"
         thenAddProperty "id" id
         writer.WritePropertyName("payload")
-        writer.WriteRawValue(JsonSerializer.Serialize(result), skipInputValidation = true)
+        writer.WriteRawValue(serializeAny result, skipInputValidation = true)
         endSerializedObj()
     | Complete(id) ->
         beginSerializedObjWith "type" "complete"
