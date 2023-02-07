@@ -13,6 +13,7 @@
     <Compile Include="Rop/Rop.fs" />
     <Compile Include="Rop/RopAsync.fs" />
     <Compile Include="WebSocketMessages.fs" />
+    <Compile Include="GraphQLWebsocketMiddlewareOptions.fs" />
     <Compile Include="JsonConverters.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />
     <Compile Include="Library.fs" />

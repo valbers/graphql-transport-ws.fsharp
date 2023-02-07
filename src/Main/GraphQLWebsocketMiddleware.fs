@@ -44,7 +44,7 @@ module internal GraphQLSubscriptionsManagement =
         )
     subscriptions.Clear()
 
-type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, jsonOptions : IOptions<JsonOptions>, executor : Executor<'Root>, root : unit -> 'Root, url: string) =
+type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, jsonOptions : IOptions<JsonOptions>, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
   let serializeServerMessage (jsonOptions: JsonOptions) serverMessage =
       task { return "dummySerializedServerMessage" }
@@ -202,7 +202,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
 
   member __.InvokeAsync(ctx : HttpContext) =
     task {
-      if not (ctx.Request.Path = PathString (url)) then
+      if false && not (ctx.Request.Path = PathString (options.EndpointUrl)) then
         do! next.Invoke(ctx)
       else
         if ctx.WebSockets.IsWebSocketRequest then
@@ -212,7 +212,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
           let safe_HandleMessages = handleMessages cancellationToken
           try
             do! socket
-                |> safe_HandleMessages jsonOptions.Value executor root
+                |> safe_HandleMessages jsonOptions.Value options.SchemaExecutor options.RootFactory
           with
             | ex ->
               printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
