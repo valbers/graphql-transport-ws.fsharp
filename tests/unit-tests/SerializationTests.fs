@@ -32,32 +32,89 @@ let ``Serializes Error correctly`` () =
 [<Fact>]
 let ``Deserializes ConnectionInit correctly`` () =
     let serializerOptions = new JsonSerializerOptions()
-    serializerOptions.Converters.Add(new WebSocketClientMessageConverter())
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
 
     let input = "{\"type\":\"connection_init\"}"
 
-    let result = JsonSerializer.Deserialize<WebSocketClientMessage>(input, serializerOptions)
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
 
-    Assert.Equivalent(ConnectionInit None, result, strict = true)
+    match result with
+    | ConnectionInit None -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value: '%A'" other)
+
+[<Fact>]
+let ``Deserializes ConnectionInit with payload correctly`` () =
+    let serializerOptions = new JsonSerializerOptions()
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
+
+    let input = "{\"type\":\"connection_init\", \"payload\":\"hello\"}"
+
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
+
+    match result with
+    | ConnectionInit (Some "hello") -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
 [<Fact>]
 let ``Deserializes ClientPing correctly`` () =
     let serializerOptions = new JsonSerializerOptions()
-    serializerOptions.Converters.Add(new WebSocketClientMessageConverter())
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
 
     let input = "{\"type\":\"ping\"}"
-    
-    let result = JsonSerializer.Deserialize<WebSocketClientMessage>(input, serializerOptions)
 
-    Assert.Equivalent(ClientPing None, result, strict = true)
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
+
+    match result with
+    | ClientPing None -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value '%A'" other)
+
+[<Fact>]
+let ``Deserializes ClientPing with payload correctly`` () =
+    let serializerOptions = new JsonSerializerOptions()
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
+
+    let input = "{\"type\":\"ping\", \"payload\":\"ping!\"}"
+
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
+
+    match result with
+    | ClientPing (Some "ping!") -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value '%A" other)
 
 [<Fact>]
 let ``Deserializes ClientPong correctly`` () =
     let serializerOptions = new JsonSerializerOptions()
-    serializerOptions.Converters.Add(new WebSocketClientMessageConverter())
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
 
     let input = "{\"type\":\"pong\"}"
     
-    let result = JsonSerializer.Deserialize<WebSocketClientMessage>(input, serializerOptions)
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
 
-    Assert.Equivalent(ClientPong None, result, strict = true)
+    match result with
+    | ClientPong None -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value: '%A'" other)
+
+[<Fact>]
+let ``Deserializes ClientPong with payload correctly`` () =
+    let serializerOptions = new JsonSerializerOptions()
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
+
+    let input = "{\"type\":\"pong\", \"payload\": \"pong!\"}"
+    
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
+
+    match result with
+    | ClientPong (Some "pong!") -> () // <-- expected
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value: '%A'" other)

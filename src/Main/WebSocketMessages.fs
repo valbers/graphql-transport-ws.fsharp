@@ -3,6 +3,21 @@ namespace GraphQLTransportWS
 open FSharp.Data.GraphQL.Execution
 open FSharp.Data.GraphQL.Types
 
+type GraphQLWsMessageSubscribePayloadRaw =
+    { OperationName : string option
+      Query : string option
+      Variables : string option
+      Extensions : string option }
+
+type GraphQLWsMessagePayloadRaw =
+    | StringPayload of string
+    | SubscribePayload of GraphQLWsMessageSubscribePayloadRaw
+
+type GraphQLWsMessageRaw =
+    { Id : string option
+      Type : string option
+      Payload : GraphQLWsMessagePayloadRaw option }
+
 type GraphQLQuery =
     { ExecutionPlan : ExecutionPlan
       Variables : Map<string, obj> }

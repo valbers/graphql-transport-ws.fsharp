@@ -5,35 +5,55 @@ open System.Text.Json
 open System.Text.Json.Serialization
 
 [<Sealed>]
-type WebSocketClientMessageConverter() =
-  inherit JsonConverter<WebSocketClientMessage>()
+type GraphQLWsMessageConverter() =
+  inherit JsonConverter<GraphQLWsMessageRaw>()
 
-  override __.Read(reader : byref<Utf8JsonReader>, typeToConvert: Type, options: JsonSerializerOptions) =
+  let getOptionalString (reader : byref<Utf8JsonReader>) =
+    if reader.TokenType.Equals(JsonTokenType.Null) then
+      None
+    else
+      Some (reader.GetString())
+
+  let readPropertyValueAsAString (propertyName : string) (reader : byref<Utf8JsonReader>) =
+    if reader.Read() then
+      getOptionalString(&reader)
+    else
+      failwithf "was expecting a value for property \"%s\"" propertyName
+
+  let readPayload (reader : byref<Utf8JsonReader>) : GraphQLWsMessagePayloadRaw option =
+    if reader.Read() then
+      if reader.TokenType.Equals(JsonTokenType.String) then
+        StringPayload (reader.GetString())
+        |> Some
+      elif reader.TokenType.Equals(JsonTokenType.Null) then
+        failwith "was expecting a value for property \"payload\""
+      else
+        None
+    else
+      failwith "was expecting a value for property \"payload\""
+
+  override __.Read(reader : byref<Utf8JsonReader>, typeToConvert: Type, options: JsonSerializerOptions) : GraphQLWsMessageRaw =
     if not (reader.TokenType.Equals(JsonTokenType.StartObject))
       then raise (new JsonException((sprintf "reader's first token was not \"%A\", but \"%A\"" JsonTokenType.StartObject reader.TokenType)))
     else
-      reader.Read() |> ignore // PropertyName
-      let messageTypePropName = reader.GetString()
-      if not (messageTypePropName = "type")
-      then
-        raise (new JsonException((sprintf "expected prop. \"type\" but got \"%s\" instead" messageTypePropName)))
-      else
-        reader.Read() |> ignore // PropertyValue
-        let messageType = reader.GetString()
-        match messageType with
-        | "connection_init" ->
-          while reader.Read() do ()
-          ConnectionInit None
-        | "ping" ->
-          while reader.Read() do ()
-          ClientPing None
-        | "pong" ->
-          while reader.Read() do ()
-          ClientPong None
+      let mutable id : string option = None
+      let mutable theType : string option = None
+      let mutable payload : GraphQLWsMessagePayloadRaw option = None
+      while reader.Read() && (not (reader.TokenType.Equals(JsonTokenType.EndObject))) do
+        match reader.GetString() with
+        | "id" ->
+          id <- readPropertyValueAsAString "id" &reader
+        | "type" ->
+          theType <- readPropertyValueAsAString "type" &reader
+        | "payload" ->
+          payload <- readPayload &reader
         | other ->
-          raise (new JsonException((sprintf "type \"%s\" is not supported" other)))
+          failwithf "unknown property \"%s\"" other
+      { Id = id
+        Type = theType
+        Payload = payload }
 
-  override __.Write(writer : Utf8JsonWriter, value : WebSocketClientMessage, options : JsonSerializerOptions) =
+  override __.Write(writer : Utf8JsonWriter, value : GraphQLWsMessageRaw, options : JsonSerializerOptions) =
     failwith "serializing a WebSocketClientMessage is not supported (yet(?))"
 
 [<Sealed>]
