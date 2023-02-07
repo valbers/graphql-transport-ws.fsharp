@@ -123,9 +123,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
           return Some result
         with :? JsonException as e ->
           printfn "%s" (e.ToString())
-          return
-            (MessageMapping.invalidMsg <| "invalid json in client message"
-            |> Some)
+          return Some (MessageMapping.invalidMsg <| "invalid json in client message")
     }
 
   let sendMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (socket : WebSocket) (message : ServerMessage) =
