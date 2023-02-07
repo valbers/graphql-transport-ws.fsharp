@@ -34,9 +34,15 @@ module MessageMapping =
       | SubscribePayload rawSubsPayload ->
         match rawSubsPayload.Query with
         | Some query ->
-          { ExecutionPlan = executor.CreateExecutionPlan(query)
-            Variables = Map.empty }
-          |> succeed
+          match rawSubsPayload.OperationName with
+          | Some operationName ->
+            { ExecutionPlan = executor.CreateExecutionPlan(query, operationName = operationName)
+              Variables = Map.empty }
+            |> succeed
+          | None ->
+            { ExecutionPlan = executor.CreateExecutionPlan(query)
+              Variables = Map.empty }
+            |> succeed
         | None ->
           invalidMsg <| sprintf "there was no query in the client's subscribe message!"
       | _ ->
