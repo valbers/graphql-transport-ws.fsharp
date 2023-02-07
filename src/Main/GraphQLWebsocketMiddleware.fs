@@ -195,15 +195,18 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
     }
 
-  member __.InvokeAsync(ctx : HttpContext) =
+  member __.InvokeAsync(ctx : HttpContext, applicationLifetime: Microsoft.Extensions.Hosting.IHostApplicationLifetime) =
     task {
       if not (ctx.Request.Path = PathString (url)) then
         do! next.Invoke(ctx)
       else
         if ctx.WebSockets.IsWebSocketRequest then
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
+          let cancellationToken =
+            (CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, applicationLifetime.ApplicationStopping).Token)
           try
-            do! socket |> handleMessages ctx.RequestAborted executor root
+            do! socket
+                |> handleMessages cancellationToken executor root
           with
             | ex ->
               printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
