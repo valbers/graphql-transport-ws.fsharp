@@ -20,15 +20,40 @@ type GraphQLWsMessageConverter() =
     else
       failwithf "was expecting a value for property \"%s\"" propertyName
 
+  let readSubscribePayload (reader : byref<Utf8JsonReader>) : GraphQLWsMessageSubscribePayloadRaw =
+    let mutable operationName : string option = None
+    let mutable query : string option = None
+    let mutable variables : string option = None
+    let mutable extensions : string option = None
+    while reader.Read() && (not <| reader.TokenType.Equals(JsonTokenType.EndObject)) do
+      match reader.GetString() with
+      | "operationName" ->
+        operationName <- readPropertyValueAsAString "operationName" &reader
+      | "query" ->
+        query <- readPropertyValueAsAString "query" &reader
+      | "variables" ->
+        variables <- readPropertyValueAsAString "variables" &reader
+      | "extensions" ->
+        extensions <- readPropertyValueAsAString "extensions" &reader
+      | other ->
+        failwithf "unexpected property \"%s\" in payload object" other
+    { OperationName = operationName
+      Query = query
+      Variables = variables
+      Extensions = extensions }
+
   let readPayload (reader : byref<Utf8JsonReader>) : GraphQLWsMessagePayloadRaw option =
     if reader.Read() then
       if reader.TokenType.Equals(JsonTokenType.String) then
         StringPayload (reader.GetString())
         |> Some
+      elif reader.TokenType.Equals(JsonTokenType.StartObject) then
+        SubscribePayload (readSubscribePayload &reader)
+        |> Some
       elif reader.TokenType.Equals(JsonTokenType.Null) then
         failwith "was expecting a value for property \"payload\""
       else
-        None
+        failwith "Not implemented yet. Uh-oh, this is a bug."
     else
       failwith "was expecting a value for property \"payload\""
 
