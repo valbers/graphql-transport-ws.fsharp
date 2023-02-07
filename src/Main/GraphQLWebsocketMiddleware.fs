@@ -16,13 +16,16 @@ open Microsoft.Extensions.Options
 open Microsoft.AspNetCore.Http.Json
 
 module internal GraphQLSubscriptionsManagement =
-  let subscriptions =
+  let private subscriptions =
     ConcurrentDictionary<string, IDisposable * (string -> unit)>()
       :> IDictionary<string, IDisposable * (string -> unit)>
 
   let addSubscription (id : string, unsubscriber : IDisposable, onUnsubscribe : string -> unit) =
     printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
     subscriptions.Add(id, (unsubscriber, onUnsubscribe))
+
+  let isIdTaken (id : string) =
+    subscriptions.ContainsKey(id)
 
   let executeOnUnsubscribeAndDispose (id : string) (subscription : IDisposable * (string -> unit)) =
       let (unsubscriber, onUnsubscribe) = subscription
@@ -140,36 +143,29 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         printfn "<- %A" message
     }
 
-  let addClientSubscription (cancellationToken : CancellationToken) (id : string) (howToSendDataOnNext: string -> Output -> Task<unit>) (streamSource: IObservable<Output>)  =
-    task {
-      let unsubscribing = new Task ((fun () -> ()), cancellationToken)
-      let onUnsubscribe _ = if not (unsubscribing.IsCanceled || unsubscribing.IsCompleted || unsubscribing.IsFaulted) then unsubscribing.Start()
-      let unsubscriber =
-          streamSource
-          |> Observable.subscribe
-              (fun theOutput ->
-                  let task = theOutput |> howToSendDataOnNext id
-                  task.Wait()
-              )
-      GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, onUnsubscribe)
-      return! unsubscribing
-  }
+  let addClientSubscription (id : string) (howToSendDataOnNext: string -> Output -> Task<unit>) (streamSource: IObservable<Output>)  =
+    let unsubscriber =
+        streamSource
+        |> Observable.subscribe
+            (fun theOutput ->
+                let task = theOutput |> howToSendDataOnNext id
+                task.Wait()
+            )
+    GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, fun _ -> ())
 
   let handleMessages (cancellationToken: CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
     // ---------->
     // Helpers -->
     // ---------->
-    let safe_SendMessageViaSocket = sendMessageViaSocket cancellationToken
+    let safe_SendMessageViaSocket = sendMessageViaSocket (new CancellationToken())
     let safe_ReceiveMessageViaSocket = receiveMessageViaSocket (new CancellationToken())
-    let safe_AddClientSubscription = addClientSubscription cancellationToken
 
     let safe_Send = safe_SendMessageViaSocket jsonOptions socket
     let safe_Receive() =
       socket
       |> safe_ReceiveMessageViaSocket jsonOptions executor Map.empty
 
-    let safe_SendQueryOutput id output =
-      task { do! safe_Send (Next (id, output)) }
+    let safe_SendQueryOutput id output = safe_Send (Next (id, output))
     let sendQueryOutputDelayedBy (cancToken: CancellationToken) (ms: int) id output =
       task {
             do! Async.StartAsTask(Async.Sleep ms, cancellationToken = cancToken)
@@ -182,13 +178,13 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       task {
             match executionResult with
             | Stream observableOutput ->
-                do! observableOutput
-                    |> safe_AddClientSubscription id safe_SendQueryOutput
+                observableOutput
+                |> addClientSubscription id safe_SendQueryOutput
             | Deferred (data, _, observableOutput) ->
                 do! data
                     |> safe_SendQueryOutput id
-                do! observableOutput
-                    |> safe_AddClientSubscription id (safe_SendQueryOutputDelayedBy 5000)
+                observableOutput
+                |> addClientSubscription id (safe_SendQueryOutputDelayedBy 5000)
             | Direct (data, _) ->
                 do! data
                     |> safe_SendQueryOutput id
@@ -234,13 +230,13 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                     "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
                     match failureMsgs |> List.head with
                     | InvalidMessage (code, explanation) ->
-                      do! socket.CloseAsync(enum code, explanation, cancellationToken)
+                      do! socket.CloseAsync(enum code, explanation, new CancellationToken())
                 | Success (ConnectionInit p, _) ->
                     "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
                     do! socket.CloseAsync(
                       enum CustomWebSocketStatus.tooManyInitializationRequests,
                       "too many initialization requests",
-                      cancellationToken)
+                      new CancellationToken())
                 | Success (ClientPing p, _) ->
                     "ClientPing" |> logMsgReceivedWithOptionalPayload p
                     do! ServerPong |> safe_Send
@@ -248,13 +244,17 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
                 | Success (Subscribe (id, query), _) ->
                     "Subscribe" |> logMsgWithIdReceived id
-                    let! planExecutionResult =
-                        Async.StartAsTask (
-                            executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables),
-                            cancellationToken = cancellationToken
-                        )
-                    do! planExecutionResult
-                        |> safe_ApplyPlanExecutionResult id
+                    if id |> GraphQLSubscriptionsManagement.isIdTaken then
+                      do! socket.CloseAsync(
+                        enum CustomWebSocketStatus.subscriberAlreadyExists,
+                        sprintf "Subscriber for %s already exists" id,
+                        new CancellationToken())
+                    else
+                      let! planExecutionResult =
+                        executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables)
+                        |> Async.StartAsTask
+                      do! planExecutionResult
+                          |> safe_ApplyPlanExecutionResult id
                 | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
                     id |> GraphQLSubscriptionsManagement.removeSubscription
@@ -275,7 +275,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       let timerTokenSource = new CancellationTokenSource()
       timerTokenSource.CancelAfter(connectionInitTimeoutInMs)
       let detonationRegistration = timerTokenSource.Token.Register(fun _ ->
-        socket.CloseAsync(enum 4408, "ConnectionInit timeout", new CancellationToken())
+        socket.CloseAsync(enum CustomWebSocketStatus.connectionTimeout, "Connection initialisation timeout", new CancellationToken())
         |> Async.AwaitTask
         |> Async.RunSynchronously
       )
@@ -288,6 +288,9 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             do! ConnectionAck |> sendMessageViaSocket (new CancellationToken()) jsonOptions socket
             detonationRegistration.Unregister() |> ignore
             return true
+          | Some (Success (Subscribe _, _)) ->
+            do! socket.CloseAsync(enum CustomWebSocketStatus.unauthorized, "Unauthorized", new CancellationToken())
+            return false
           | Some (Failure [InvalidMessage (code, explanation)]) ->
             do! socket.CloseAsync(enum code, explanation, new CancellationToken())
             return false

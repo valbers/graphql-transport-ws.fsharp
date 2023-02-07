@@ -52,4 +52,6 @@ type ServerMessage =
 
 module CustomWebSocketStatus =
     let invalidMessage = 4400
+    let unauthorized = 4401
+    let subscriberAlreadyExists = 4409
     let tooManyInitializationRequests = 4429
