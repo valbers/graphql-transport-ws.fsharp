@@ -269,9 +269,9 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
 
   let waitForConnectionInit (jsonOptions : JsonOptions) (schemaExecutor : Executor<'Root>) (replacements : Map<string, obj>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
     task {
-      let cancelAfter = new CancellationTokenSource()
-      cancelAfter.CancelAfter(connectionInitTimeoutInMs)
-      let cancelCancel = cancelAfter.Token.Register(fun _ ->
+      let timerTokenSource = new CancellationTokenSource()
+      timerTokenSource.CancelAfter(connectionInitTimeoutInMs)
+      let detonationRegistration = timerTokenSource.Token.Register(fun _ ->
         socket.CloseAsync(enum 4408, "ConnectionInit timeout", new CancellationToken())
         |> Async.AwaitTask
         |> Async.RunSynchronously
@@ -279,11 +279,11 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       let! _ = Task.Run<bool>((fun _ ->
         task {
           printfn "Waiting for ConnectionInit..."
-          let! _ = receiveMessageViaSocket (new CancellationToken()) jsonOptions options.SchemaExecutor Map.empty socket
-          cancelCancel.Unregister() |> ignore
+          let! _ = receiveMessageViaSocket (new CancellationToken()) jsonOptions schemaExecutor replacements socket
+          detonationRegistration.Unregister() |> ignore
           return true
-        }), cancelAfter.Token)
-      if not cancelAfter.Token.IsCancellationRequested then
+        }), timerTokenSource.Token)
+      if not timerTokenSource.Token.IsCancellationRequested then
         return (succeed ())
       else
         return (fail "ConnectionInit timeout")
@@ -296,7 +296,9 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       else
         if ctx.WebSockets.IsWebSocketRequest then
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
-          let! connectionInitResult = socket |> waitForConnectionInit jsonOptions.Value options.SchemaExecutor Map.empty options.ConnectionInitTimeoutInMs
+          let! connectionInitResult =
+            socket
+            |> waitForConnectionInit jsonOptions.Value options.SchemaExecutor Map.empty options.ConnectionInitTimeoutInMs
           match connectionInitResult with
           | Failure errMsg ->
             printfn "%A" errMsg
