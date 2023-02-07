@@ -15,37 +15,48 @@ open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Options
 open Microsoft.AspNetCore.Http.Json
 
+type SubscriptionId = SubsId of string
+type SubscriptionUnsubscriber = Unsubscriber of IDisposable
+type OnUnsubscribeAction = OnUnsubAction of (SubscriptionId -> unit)
+type SubscriptionsDict = SubsDict of IDictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>
+
 module internal GraphQLSubscriptionsManagement =
-  let private subscriptions =
-    ConcurrentDictionary<string, IDisposable * (string -> unit)>()
-      :> IDictionary<string, IDisposable * (string -> unit)>
+  let addSubscription (id : SubscriptionId, unsubscriber : SubscriptionUnsubscriber, onUnsubscribe : OnUnsubscribeAction)
+                      (subscriptions : SubscriptionsDict) =
+    match subscriptions with
+    | SubsDict subscriptions ->
+      printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
+      subscriptions.Add(id, (unsubscriber, onUnsubscribe))
 
-  let addSubscription (id : string, unsubscriber : IDisposable, onUnsubscribe : string -> unit) =
-    printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
-    subscriptions.Add(id, (unsubscriber, onUnsubscribe))
+  let isIdTaken (id : SubscriptionId) (subscriptions : SubscriptionsDict) =
+    match subscriptions with
+    | SubsDict subscriptions ->
+      subscriptions.ContainsKey(id)
 
-  let isIdTaken (id : string) =
-    subscriptions.ContainsKey(id)
+  let executeOnUnsubscribeAndDispose (id : SubscriptionId) (subscription : SubscriptionUnsubscriber * OnUnsubscribeAction) =
+      match subscription with
+      | Unsubscriber unsubscriber, OnUnsubAction onUnsubscribe ->
+        id |> onUnsubscribe
+        unsubscriber.Dispose()
 
-  let executeOnUnsubscribeAndDispose (id : string) (subscription : IDisposable * (string -> unit)) =
-      let (unsubscriber, onUnsubscribe) = subscription
-      id |> onUnsubscribe
-      unsubscriber.Dispose()
+  let removeSubscription (id: SubscriptionId) (subscriptions : SubscriptionsDict) =
+    match subscriptions with
+    | SubsDict subscriptions ->
+      if subscriptions.ContainsKey(id) then
+        subscriptions.[id]
+        |> executeOnUnsubscribeAndDispose id
+        subscriptions.Remove(id) |> ignore
 
-  let removeSubscription (id: string) =
-    if subscriptions.ContainsKey(id) then
-      subscriptions.[id]
-      |> executeOnUnsubscribeAndDispose id
-      subscriptions.Remove(id) |> ignore
-
-  let removeAllSubscriptions() =
-    subscriptions
-    |> Seq.iter
-        (fun subscription ->
-            subscription.Value
-            |> executeOnUnsubscribeAndDispose subscription.Key
-        )
-    subscriptions.Clear()
+  let removeAllSubscriptions (subscriptions : SubscriptionsDict) =
+    match subscriptions with
+    | SubsDict subscriptions ->
+      subscriptions
+      |> Seq.iter
+          (fun subscription ->
+              subscription.Value
+              |> executeOnUnsubscribeAndDispose subscription.Key
+          )
+      subscriptions.Clear()
 
 type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
@@ -146,7 +157,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         printfn "<- %A" message
     }
 
-  let addClientSubscription (id : string) (howToSendDataOnNext: string -> Output -> Task<unit>) (streamSource: IObservable<Output>)  =
+  let addClientSubscription (id : SubscriptionId) (howToSendDataOnNext: SubscriptionId -> Output -> Task<unit>) (streamSource: IObservable<Output>)  =
     let unsubscriber =
         streamSource
         |> Observable.subscribe
@@ -154,7 +165,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                 let task = theOutput |> howToSendDataOnNext id
                 task.Wait()
             )
-    GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, fun _ -> ())
+    GraphQLSubscriptionsManagement.addSubscription(id, Unsubscriber unsubscriber, OnUnsubAction (fun _ -> ()))
 
   let tryToGracefullyCloseSocket (code, message) theSocket =
     task {
@@ -169,6 +180,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     tryToGracefullyCloseSocket (WebSocketCloseStatus.NormalClosure, "NormalClosure")
 
   let handleMessages (cancellationToken: CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
+    let subscriptions = SubsDict <| new Dictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>()
     // ---------->
     // Helpers -->
     // ---------->
@@ -180,7 +192,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       socket
       |> safe_ReceiveMessageViaSocket jsonOptions executor Map.empty
 
-    let safe_SendQueryOutput id output = safe_Send (Next (id, output))
+    let safe_SendQueryOutput id output =
+      match id with
+      | SubsId id ->
+        safe_Send (Next (id, output))
     let sendQueryOutputDelayedBy (cancToken: CancellationToken) (ms: int) id output =
       task {
             do! Async.StartAsTask(Async.Sleep ms, cancellationToken = cancToken)
@@ -189,17 +204,17 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         }
     let safe_SendQueryOutputDelayedBy = sendQueryOutputDelayedBy cancellationToken
 
-    let safe_ApplyPlanExecutionResult (id: string) (executionResult: GQLResponse)  =
+    let safe_ApplyPlanExecutionResult (id: SubscriptionId) (executionResult: GQLResponse)  =
       task {
             match executionResult with
             | Stream observableOutput ->
-                observableOutput
-                |> addClientSubscription id safe_SendQueryOutput
+                subscriptions
+                |> addClientSubscription id safe_SendQueryOutput observableOutput
             | Deferred (data, _, observableOutput) ->
                 do! data
                     |> safe_SendQueryOutput id
-                observableOutput
-                |> addClientSubscription id (safe_SendQueryOutputDelayedBy 5000)
+                subscriptions
+                |> addClientSubscription id (safe_SendQueryOutputDelayedBy 5000) observableOutput
             | Direct (data, _) ->
                 do! data
                     |> safe_SendQueryOutput id
@@ -250,7 +265,8 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
                 | Success (Subscribe (id, query), _) ->
                     "Subscribe" |> logMsgWithIdReceived id
-                    if id |> GraphQLSubscriptionsManagement.isIdTaken then
+                    let subsId = SubsId id
+                    if subscriptions |> GraphQLSubscriptionsManagement.isIdTaken subsId then
                       do! socket.CloseAsync(
                         enum CustomWebSocketStatus.subscriberAlreadyExists,
                         sprintf "Subscriber for %s already exists" id,
@@ -260,10 +276,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                         executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables)
                         |> Async.StartAsTask
                       do! planExecutionResult
-                          |> safe_ApplyPlanExecutionResult id
+                          |> safe_ApplyPlanExecutionResult subsId
                 | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
-                    id |> GraphQLSubscriptionsManagement.removeSubscription
+                    subscriptions |> GraphQLSubscriptionsManagement.removeSubscription (SubsId id)
                     do! Complete id |> safe_Send
         printfn "Leaving graphql-ws connection loop..."
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
