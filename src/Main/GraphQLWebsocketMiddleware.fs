@@ -11,6 +11,9 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open FSharp.Data.GraphQL.Execution
+open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Options
+open Microsoft.AspNetCore.Http.Json
 
 module internal GraphQLSubscriptionsManagement =
   let subscriptions =
@@ -41,15 +44,15 @@ module internal GraphQLSubscriptionsManagement =
         )
     subscriptions.Clear()
 
-type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Executor<'Root>, root : unit -> 'Root, url: string) =
+type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, jsonOptions : IOptions<JsonOptions>, executor : Executor<'Root>, root : unit -> 'Root, url: string) =
 
-  let serializeServerMessage obj =
+  let serializeServerMessage (jsonOptions: JsonOptions) obj =
       task { return "dummySerializedServerMessage" }
 
-  let deserializeClientMessage (msg: string) =
+  let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
     task { return ConnectionInit None }
 
-  let receiveMessageViaSocket (cancellationToken : CancellationToken) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) =
+  let receiveMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) =
     task {
       let buffer = Array.zeroCreate 4096
       let completeMessage = new List<byte>()
@@ -67,16 +70,16 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
       if String.IsNullOrWhiteSpace message then
         return None
       else
-        let! deserializedMsg = deserializeClientMessage message
+        let! deserializedMsg = deserializeClientMessage jsonOptions message
         return Some deserializedMsg
     }
 
-  let sendMessageViaSocket (cancellationToken : CancellationToken) (socket : WebSocket) (message : WebSocketServerMessage) =
+  let sendMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (socket : WebSocket) (message : WebSocketServerMessage) =
     task {
       if not (socket.State = WebSocketState.Open) then
         printfn "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State
       else
-        let! serializedMessage = message |> serializeServerMessage
+        let! serializedMessage = message |> serializeServerMessage jsonOptions
         let segment =
           new ArraySegment<byte>(
             System.Text.Encoding.UTF8.GetBytes(serializedMessage)
@@ -100,7 +103,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
       return! unsubscribing
   }
 
-  let handleMessages (cancellationToken: CancellationToken) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
+  let handleMessages (cancellationToken: CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
     // ---------->
     // Helpers -->
     // ---------->
@@ -108,10 +111,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
     let safe_ReceiveMessageViaSocket = receiveMessageViaSocket cancellationToken
     let safe_AddClientSubscription = addClientSubscription cancellationToken
 
-    let safe_Send = safe_SendMessageViaSocket socket
+    let safe_Send = safe_SendMessageViaSocket jsonOptions socket
     let safe_Receive() =
       socket
-      |> safe_ReceiveMessageViaSocket executor Map.empty
+      |> safe_ReceiveMessageViaSocket jsonOptions executor Map.empty
 
     let safe_SendQueryOutput id output =
       task { do! safe_Send (Next (id, output)) }
@@ -195,7 +198,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
     }
 
-  member __.InvokeAsync(ctx : HttpContext, applicationLifetime: Microsoft.Extensions.Hosting.IHostApplicationLifetime) =
+  member __.InvokeAsync(ctx : HttpContext) =
     task {
       if not (ctx.Request.Path = PathString (url)) then
         do! next.Invoke(ctx)
@@ -207,7 +210,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
           let safe_HandleMessages = handleMessages cancellationToken
           try
             do! socket
-                |> safe_HandleMessages executor root
+                |> safe_HandleMessages jsonOptions.Value executor root
           with
             | ex ->
               printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
