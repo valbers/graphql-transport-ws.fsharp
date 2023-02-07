@@ -30,8 +30,10 @@ module internal GraphQLSubscriptionsManagement =
   let executeOnUnsubscribeAndDispose (id : SubscriptionId) (subscription : SubscriptionUnsubscriber * OnUnsubscribeAction) =
       match subscription with
       | unsubscriber, onUnsubscribe ->
-        id |> onUnsubscribe
-        unsubscriber.Dispose()
+        try
+          id |> onUnsubscribe
+        finally
+          unsubscriber.Dispose()
 
   let removeSubscription (id: SubscriptionId) (subscriptions : SubscriptionsDict) =
     if subscriptions.ContainsKey(id) then
