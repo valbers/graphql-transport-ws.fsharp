@@ -49,7 +49,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
   let deserializeClientMessage (msg: string) =
     task { return ConnectionInit None }
 
-  let receiveMessageViaSocket (executor : Executor<'Root>) (replacements : Map<string, obj>) (cancellationToken : CancellationToken) (socket : WebSocket) =
+  let receiveMessageViaSocket (cancellationToken : CancellationToken) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) =
     task {
       let buffer = Array.zeroCreate 4096
       let completeMessage = new List<byte>()
@@ -71,7 +71,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
         return Some deserializedMsg
     }
 
-  let sendMessageViaSocket (socket : WebSocket) (cancellationToken : CancellationToken) (message : WebSocketServerMessage) =
+  let sendMessageViaSocket (cancellationToken : CancellationToken) (socket : WebSocket) (message : WebSocketServerMessage) =
     task {
       if not (socket.State = WebSocketState.Open) then
         printfn "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State
@@ -85,12 +85,31 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
         printfn "<- %A" message
     }
 
-  let handleMessages (executor : Executor<'Root>) (root: unit -> 'Root) (cancellationToken: CancellationToken) (socket : WebSocket) =
+  let addClientSubscription (cancellationToken : CancellationToken) (id : string) (howToSendDataOnNext: string -> Output -> Task<unit>) (streamSource: IObservable<Output>)  =
+    task {
+      let unsubscribing = new Task ((fun () -> ()), cancellationToken)
+      let onUnsubscribe _ = if not (unsubscribing.IsCanceled || unsubscribing.IsCompleted || unsubscribing.IsFaulted) then unsubscribing.Start()
+      let unsubscriber =
+          streamSource
+          |> Observable.subscribe
+              (fun theOutput ->
+                  let task = theOutput |> howToSendDataOnNext id
+                  task.Wait()
+              )
+      GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, onUnsubscribe)
+      return! unsubscribing
+  }
+
+  let handleMessages (cancellationToken: CancellationToken) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
     // ---------->
     // Helpers -->
     // ---------->
-    let send = sendMessageViaSocket socket cancellationToken
-    let receive = receiveMessageViaSocket executor Map.empty cancellationToken
+    let safe_SendMessageViaSocket = sendMessageViaSocket cancellationToken
+    let safe_ReceiveMessageViaSocket = receiveMessageViaSocket cancellationToken
+    let safe_AddClientSubscription = addClientSubscription cancellationToken
+
+    let send = safe_SendMessageViaSocket socket
+    let receive() = socket |> safe_ReceiveMessageViaSocket executor Map.empty
 
     let sendQueryOutput id output =
       task { do! send (Next (id, output)) }
@@ -100,30 +119,16 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
             do! output |> sendQueryOutput id
         }
 
-    let addClientSubscription (id: string) (howToSendDataOnNext: string -> Output -> Task<unit>) (streamSource: IObservable<Output>, cancellationToken: CancellationToken)  = task {
-        let unsubscribing = new Task ((fun () -> ()), cancellationToken)
-        let onUnsubscribe _ = if not (unsubscribing.IsCanceled || unsubscribing.IsCompleted || unsubscribing.IsFaulted) then unsubscribing.Start()
-        let unsubscriber =
-            streamSource
-            |> Observable.subscribe
-                (fun theOutput ->
-                    let task = theOutput |> howToSendDataOnNext id
-                    task.Wait()
-                )
-        GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, onUnsubscribe)
-        return! unsubscribing
-    }
-
-    let applyPlanExecutionResultToSocket (theSocket: WebSocket) (id: string) (cancellationToken: CancellationToken) (executionResult: GQLResponse)  =
+    let applyPlanExecutionResult (id: string) (executionResult: GQLResponse)  =
       task {
             match executionResult with
             | Stream observableOutput ->
-                do! (observableOutput, cancellationToken)
-                    |> addClientSubscription id sendQueryOutput
+                do! observableOutput
+                    |> safe_AddClientSubscription id sendQueryOutput
             | Deferred (data, _, observableOutput) ->
                 do! data |> sendQueryOutput id
-                do! (observableOutput, cancellationToken)
-                    |> addClientSubscription id (sendQueryOutputDelayedBy 5000)
+                do! observableOutput
+                    |> safe_AddClientSubscription id (sendQueryOutputDelayedBy 5000)
             | Direct (data, _) ->
                 do! data |> sendQueryOutput id
         }
@@ -149,8 +154,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
     task {
       try
           while not cancellationToken.IsCancellationRequested do
-              let! receivedMessage =
-                socket |> receive
+              let! receivedMessage = receive()
               match receivedMessage with
               | None ->
                   printfn "Warn: websocket socket received empty message!"
@@ -172,7 +176,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
                               cancellationToken = cancellationToken
                           )
                       do! planExecutionResult
-                          |> applyPlanExecutionResultToSocket socket id cancellationToken
+                          |> applyPlanExecutionResult id
                   | ClientComplete id ->
                       "ClientComplete" |> logMsgWithIdReceived id
                       id |> GraphQLSubscriptionsManagement.removeSubscription
@@ -193,7 +197,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
         if ctx.WebSockets.IsWebSocketRequest then
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
           try
-            do! socket |> handleMessages executor root ctx.RequestAborted
+            do! socket |> handleMessages ctx.RequestAborted executor root
           with
             | ex ->
               printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
