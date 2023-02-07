@@ -4,7 +4,6 @@ open FSharp.Data.GraphQL
 open Microsoft.AspNetCore.Http
 open GraphQLTransportWS.Rop
 open System
-open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Net.WebSockets
 open System.Text.Json
@@ -12,51 +11,42 @@ open System.Threading
 open System.Threading.Tasks
 open FSharp.Data.GraphQL.Execution
 open Microsoft.Extensions.Hosting
-open Microsoft.Extensions.Options
 open Microsoft.AspNetCore.Http.Json
 
-type SubscriptionId = SubsId of string
-type SubscriptionUnsubscriber = Unsubscriber of IDisposable
-type OnUnsubscribeAction = OnUnsubAction of (SubscriptionId -> unit)
-type SubscriptionsDict = SubsDict of IDictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>
+type SubscriptionId = string
+type SubscriptionUnsubscriber = IDisposable
+type OnUnsubscribeAction = SubscriptionId -> unit
+type SubscriptionsDict = IDictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>
 
 module internal GraphQLSubscriptionsManagement =
   let addSubscription (id : SubscriptionId, unsubscriber : SubscriptionUnsubscriber, onUnsubscribe : OnUnsubscribeAction)
                       (subscriptions : SubscriptionsDict) =
-    match subscriptions with
-    | SubsDict subscriptions ->
-      printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
-      subscriptions.Add(id, (unsubscriber, onUnsubscribe))
+    printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
+    subscriptions.Add(id, (unsubscriber, onUnsubscribe))
 
   let isIdTaken (id : SubscriptionId) (subscriptions : SubscriptionsDict) =
-    match subscriptions with
-    | SubsDict subscriptions ->
-      subscriptions.ContainsKey(id)
+    subscriptions.ContainsKey(id)
 
   let executeOnUnsubscribeAndDispose (id : SubscriptionId) (subscription : SubscriptionUnsubscriber * OnUnsubscribeAction) =
       match subscription with
-      | Unsubscriber unsubscriber, OnUnsubAction onUnsubscribe ->
+      | unsubscriber, onUnsubscribe ->
         id |> onUnsubscribe
         unsubscriber.Dispose()
 
   let removeSubscription (id: SubscriptionId) (subscriptions : SubscriptionsDict) =
-    match subscriptions with
-    | SubsDict subscriptions ->
-      if subscriptions.ContainsKey(id) then
-        subscriptions.[id]
-        |> executeOnUnsubscribeAndDispose id
-        subscriptions.Remove(id) |> ignore
+    if subscriptions.ContainsKey(id) then
+      subscriptions.[id]
+      |> executeOnUnsubscribeAndDispose id
+      subscriptions.Remove(id) |> ignore
 
   let removeAllSubscriptions (subscriptions : SubscriptionsDict) =
-    match subscriptions with
-    | SubsDict subscriptions ->
-      subscriptions
-      |> Seq.iter
-          (fun subscription ->
-              subscription.Value
-              |> executeOnUnsubscribeAndDispose subscription.Key
-          )
-      subscriptions.Clear()
+    subscriptions
+    |> Seq.iter
+        (fun subscription ->
+            subscription.Value
+            |> executeOnUnsubscribeAndDispose subscription.Key
+        )
+    subscriptions.Clear()
 
 type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
@@ -172,12 +162,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         ),
       onCompleted =
         (fun () ->
-          match id with
-          | SubsId theId ->
-            Complete theId
-            |> sendMessageViaSocket jsonSerializerOptions (socket)
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
+          Complete id
+          |> sendMessageViaSocket jsonSerializerOptions (socket)
+          |> Async.AwaitTask
+          |> Async.RunSynchronously
           subscriptions
           |> GraphQLSubscriptionsManagement.removeSubscription(id)
         )
@@ -186,7 +174,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let unsubscriber = streamSource.Subscribe(observer)
 
     subscriptions
-    |> GraphQLSubscriptionsManagement.addSubscription(id, Unsubscriber unsubscriber, OnUnsubAction (fun _ -> ()))
+    |> GraphQLSubscriptionsManagement.addSubscription(id, unsubscriber, (fun _ -> ()))
 
   let tryToGracefullyCloseSocket (code, message) theSocket =
     task {
@@ -201,7 +189,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     tryToGracefullyCloseSocket (WebSocketCloseStatus.NormalClosure, "Normal Closure")
 
   let handleMessages (cancellationToken: CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
-    let subscriptions = SubsDict <| new Dictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>()
+    let subscriptions = new Dictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>()
     // ---------->
     // Helpers -->
     // ---------->
@@ -213,17 +201,15 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       |> safe_ReceiveMessageViaSocket serializerOptions executor Map.empty
 
     let safe_SendQueryOutput id output =
-      match id with
-      | SubsId theId ->
-        let outputAsDict = output :> IDictionary<string, obj>
-        match outputAsDict.TryGetValue("errors") with
-        | true, theValue ->
-          // The specification says: "This message terminates the operation and no further messages will be sent."
-          subscriptions
-          |> GraphQLSubscriptionsManagement.removeSubscription(id)
-          safe_Send (Error (theId, unbox theValue))
-        | false, _ ->
-          safe_Send (Next (theId, output))
+      let outputAsDict = output :> IDictionary<string, obj>
+      match outputAsDict.TryGetValue("errors") with
+      | true, theValue ->
+        // The specification says: "This message terminates the operation and no further messages will be sent."
+        subscriptions
+        |> GraphQLSubscriptionsManagement.removeSubscription(id)
+        safe_Send (Error (id, unbox theValue))
+      | false, _ ->
+        safe_Send (Next (id, output))
 
     let sendQueryOutputDelayedBy (cancToken: CancellationToken) (ms: int) id output =
       task {
@@ -297,8 +283,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
                 | Success (Subscribe (id, query), _) ->
                     "Subscribe" |> logMsgWithIdReceived id
-                    let subsId = SubsId id
-                    if subscriptions |> GraphQLSubscriptionsManagement.isIdTaken subsId then
+                    if subscriptions |> GraphQLSubscriptionsManagement.isIdTaken id then
                       do! socket.CloseAsync(
                         enum CustomWebSocketStatus.subscriberAlreadyExists,
                         sprintf "Subscriber for %s already exists" id,
@@ -308,10 +293,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                         executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables)
                         |> Async.StartAsTask
                       do! planExecutionResult
-                          |> safe_ApplyPlanExecutionResult subsId socket
+                          |> safe_ApplyPlanExecutionResult id socket
                 | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
-                    subscriptions |> GraphQLSubscriptionsManagement.removeSubscription (SubsId id)
+                    subscriptions |> GraphQLSubscriptionsManagement.removeSubscription (id)
                     do! Complete id |> safe_Send
         printfn "Leaving graphql-ws connection loop..."
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
