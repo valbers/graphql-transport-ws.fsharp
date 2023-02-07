@@ -108,35 +108,35 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
     let safe_ReceiveMessageViaSocket = receiveMessageViaSocket cancellationToken
     let safe_AddClientSubscription = addClientSubscription cancellationToken
 
-    let send = safe_SendMessageViaSocket socket
-    let receive() =
+    let safe_Send = safe_SendMessageViaSocket socket
+    let safe_Receive() =
       socket
       |> safe_ReceiveMessageViaSocket executor Map.empty
 
-    let sendQueryOutput id output =
-      task { do! send (Next (id, output)) }
-    let sendQueryOutputDelayedBy (ms: int) id output =
+    let safe_SendQueryOutput id output =
+      task { do! safe_Send (Next (id, output)) }
+    let sendQueryOutputDelayedBy (cancToken: CancellationToken) (ms: int) id output =
       task {
-            do! Async.Sleep ms
-                |> Async.StartAsTask
+            do! Async.StartAsTask(Async.Sleep ms, cancellationToken = cancToken)
             do! output
-                |> sendQueryOutput id
+                |> safe_SendQueryOutput id
         }
+    let safe_SendQueryOutputDelayedBy = sendQueryOutputDelayedBy cancellationToken
 
-    let applyPlanExecutionResult (id: string) (executionResult: GQLResponse)  =
+    let safe_ApplyPlanExecutionResult (id: string) (executionResult: GQLResponse)  =
       task {
             match executionResult with
             | Stream observableOutput ->
                 do! observableOutput
-                    |> safe_AddClientSubscription id sendQueryOutput
+                    |> safe_AddClientSubscription id safe_SendQueryOutput
             | Deferred (data, _, observableOutput) ->
                 do! data
-                    |> sendQueryOutput id
+                    |> safe_SendQueryOutput id
                 do! observableOutput
-                    |> safe_AddClientSubscription id (sendQueryOutputDelayedBy 5000)
+                    |> safe_AddClientSubscription id (safe_SendQueryOutputDelayedBy 5000)
             | Direct (data, _) ->
                 do! data
-                    |> sendQueryOutput id
+                    |> safe_SendQueryOutput id
         }
 
     let getStrAddendumOfOptionalPayload optionalPayload =
@@ -160,7 +160,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
     task {
       try
           while not cancellationToken.IsCancellationRequested do
-              let! receivedMessage = receive()
+              let! receivedMessage = safe_Receive()
               match receivedMessage with
               | None ->
                   printfn "Warn: websocket socket received empty message!"
@@ -168,10 +168,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
                   match msg with
                   | ConnectionInit p ->
                       "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
-                      do! ConnectionAck |> send
+                      do! ConnectionAck |> safe_Send
                   | ClientPing p ->
                       "ClientPing" |> logMsgReceivedWithOptionalPayload p
-                      do! ServerPong None |> send
+                      do! ServerPong None |> safe_Send
                   | ClientPong p ->
                       "ClientPong" |> logMsgReceivedWithOptionalPayload p
                   | Subscribe (id, query) ->
@@ -182,14 +182,14 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, executor : Execut
                               cancellationToken = cancellationToken
                           )
                       do! planExecutionResult
-                          |> applyPlanExecutionResult id
+                          |> safe_ApplyPlanExecutionResult id
                   | ClientComplete id ->
                       "ClientComplete" |> logMsgWithIdReceived id
                       id |> GraphQLSubscriptionsManagement.removeSubscription
-                      do! Complete id |> send
+                      do! Complete id |> safe_Send
                   | InvalidMessage explanation ->
                       "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
-                      do! Error (None, explanation) |> send
+                      do! Error (None, explanation) |> safe_Send
       with // TODO: MAKE A PROPER GRAPHQL ERROR HANDLING!
       | ex ->
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
