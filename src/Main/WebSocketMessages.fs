@@ -20,5 +20,8 @@ type WebSocketServerMessage =
     | ServerPing of payload: string option
     | ServerPong of payload: string option
     | Next of id : string * payload : Output
-    | Error of id : string option * err : string
+    | Error of id : string * err : string list
     | Complete of id : string
+
+module CustomWebSocketStatus =
+    let invalidMessage = 4400

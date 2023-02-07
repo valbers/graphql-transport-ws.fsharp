@@ -46,7 +46,7 @@ module internal GraphQLSubscriptionsManagement =
 
 type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, jsonOptions : IOptions<JsonOptions>, executor : Executor<'Root>, root : unit -> 'Root, url: string) =
 
-  let serializeServerMessage (jsonOptions: JsonOptions) obj =
+  let serializeServerMessage (jsonOptions: JsonOptions) serverMessage =
       task { return "dummySerializedServerMessage" }
 
   let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
@@ -153,6 +153,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let logMsgWithIdReceived id msgAsStr =
         printfn "%s (id: %s)" msgAsStr id
 
+    let mutable socketClosed = false
     // <--------------
     // <-- Helpers --|
     // <--------------
@@ -162,7 +163,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     // ------->
     task {
       try
-          while not cancellationToken.IsCancellationRequested do
+          while not cancellationToken.IsCancellationRequested && not socketClosed do
               let! receivedMessage = safe_Receive()
               match receivedMessage with
               | None ->
@@ -192,7 +193,8 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                       do! Complete id |> safe_Send
                   | InvalidMessage explanation ->
                       "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
-                      do! Error (None, explanation) |> safe_Send
+                      do! socket.CloseAsync(enum CustomWebSocketStatus.invalidMessage, explanation, cancellationToken)
+                      socketClosed <- true
       with // TODO: MAKE A PROPER GRAPHQL ERROR HANDLING!
       | ex ->
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
