@@ -2,11 +2,12 @@ namespace GraphQLTransportWS
 
 open FSharp.Data.GraphQL.Execution
 open FSharp.Data.GraphQL.Types
+open System.Text.Json
 
 type RawSubscribePayload =
     { OperationName : string option
       Query : string option
-      Variables : string option
+      Variables : JsonDocument option
       Extensions : string option }
 
 type RawPayload =
