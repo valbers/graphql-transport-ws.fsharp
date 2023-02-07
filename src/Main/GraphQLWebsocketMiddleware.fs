@@ -77,9 +77,11 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         return JsonSerializer.Serialize(raw, jsonOptions.SerializerOptions)
       }
 
-  let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
+  let deserializeClientMessage (jsonOptions: JsonOptions) (executor : Executor<'Root>) (msg: string) =
     task {
-      return JsonSerializer.Deserialize<RawMessage>(msg, jsonOptions.SerializerOptions)
+      return
+        JsonSerializer.Deserialize<RawMessage>(msg, jsonOptions.SerializerOptions)
+        |> MessageMapping.toClientMessage executor
     }
 
   let isSocketOpen (theSocket : WebSocket) =
@@ -115,11 +117,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         return None
       else
         try
-          let! deserializedRawMsg = deserializeClientMessage jsonOptions message
-          return
-            deserializedRawMsg
-            |> MessageMapping.toClientMessage executor
-            |> Some
+          let! result =
+            message
+            |> deserializeClientMessage jsonOptions executor
+          return Some result
         with :? JsonException as e ->
           printfn "%s" (e.ToString())
           return
