@@ -29,100 +29,70 @@ module MessageMapping =
     | None ->
       succeed None
 
+  let private resolveVariables (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
+    try
+      if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
+        let offendingValueKind = variableValuesObj.RootElement.ValueKind
+        fail (sprintf "\"variables\" must be an object, but here it is \"%A\" instead" offendingValueKind)
+      else
+        let providedVariableValues = variableValuesObj.RootElement.EnumerateObject() |> List.ofSeq
+        expectedVariables
+        |> List.choose
+            (fun expectedVariable ->
+              providedVariableValues
+              |> List.tryFind(fun x -> x.Name = expectedVariable.Name)
+              |> Option.map
+                (fun providedValue ->
+                  let boxedValue =
+                    if providedValue.Value.ValueKind.Equals(JsonValueKind.Null) then
+                      null :> obj
+                    elif providedValue.Value.ValueKind.Equals(JsonValueKind.String) then
+                      providedValue.Value.GetString() :> obj
+                    else
+                      JsonSerializer.Deserialize(providedValue.Value, new JsonSerializerOptions()) :> obj
+                  (expectedVariable.Name, boxedValue)
+                )
+            )
+        |> succeed
+    finally
+      variableValuesObj.Dispose()
+
+  let decodeGraphQLQuery (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
+    let executionPlan =
+      match operationName with
+      | Some operationName ->
+        executor.CreateExecutionPlan(query, operationName = operationName)
+      | None ->
+        executor.CreateExecutionPlan(query)
+    let variablesResult : RopResult<Map<string, obj>, ClientMessageProtocolFailure> =
+      match variables with
+      | None -> succeed <| Map.empty // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
+      | Some variableValuesObj ->
+        variableValuesObj
+        |> resolveVariables executionPlan.Variables
+        |> mapMessagesR (fun errMsg -> InvalidMessage (CustomWebSocketStatus.invalidMessage, errMsg))
+        |> mapR Map.ofList
+    variablesResult
+    |> mapR (fun variables ->
+              { ExecutionPlan = executionPlan
+                Variables = variables })
+
   let private requireSubscribePayload (executor : Executor<'a>) (payload : RawPayload option) : RopResult<GraphQLQuery, ClientMessageProtocolFailure> =
     match payload with
+    | None ->
+      invalidMsg <| "payload is required for this message, but none was present."
     | Some p ->
       match p with
       | SubscribePayload rawSubsPayload ->
         match rawSubsPayload.Query with
-        | Some query ->
-          let executionPlan =
-            match rawSubsPayload.OperationName with
-            | Some operationName ->
-              executor.CreateExecutionPlan(query, operationName = operationName)
-            | None ->
-              executor.CreateExecutionPlan(query)
-          let variablesResult : RopResult<Map<string, obj>, ClientMessageProtocolFailure> =
-            match executionPlan.Variables with
-            | [] ->
-              succeed <| Map.empty
-            | expectedVariables ->
-              match rawSubsPayload.Variables with
-              | None -> invalidMsg "No variable values were provided, although some were expected."
-              | Some variableValuesObj ->
-                if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
-                  invalidMsg (sprintf "client-specified GraphQL variables should be an object, but here were '%A'" variableValuesObj.RootElement.ValueKind)
-                else
-                  let providedVariableValues = variableValuesObj.RootElement.EnumerateObject() |> List.ofSeq
-                  let expectedVariablesParsingResult =
-                    expectedVariables
-                    |> List.map
-                        (fun expectedVariable ->
-                          match providedVariableValues |> List.tryFind(fun x -> x.Name = expectedVariable.Name) with
-                          | Some providedValue ->
-                            let boxedValue =
-                              if providedValue.Value.ValueKind.Equals(JsonValueKind.Null) then
-                                null :> obj
-                              elif providedValue.Value.ValueKind.Equals(JsonValueKind.String) then
-                                providedValue.Value.GetString() :> obj
-                              else
-                                JsonSerializer.Deserialize(providedValue.Value, new JsonSerializerOptions()) :> obj
-                            succeed <| Some (expectedVariable.Name, boxedValue)
-                          | None ->
-                            match expectedVariable.DefaultValue, expectedVariable.TypeDef with
-                            | Some _, _ ->
-                              succeed <| None // it has a default value, so this default value will be used later when needed
-                            | _, Nullable _ ->
-                              succeed <| None // ok, it doesn't have a default value, but it's nullable, so it's a valid case that it's not there
-                            | None, _ ->
-                              fail <| sprintf "value for required variable \"%s\" was not present in the request!" expectedVariable.Name
-                        )
-                  let errors =
-                    expectedVariablesParsingResult
-                    |> List.filter (either (fun _ -> false) (fun _ -> true))
-                    |> List.map
-                          (either
-                            (fun _ -> "")
-                            (fun errMsgs -> System.String.Join("\n", errMsgs)))
-
-                  if not errors.IsEmpty then
-                    invalidMsg (System.String.Join("\n", errors))
-                  else
-                    expectedVariablesParsingResult
-                    |> List.filter (either (fun _ -> true) (fun _ -> false))
-                    |> List.map
-                        (either
-                        (fun (keyValuePair, _) ->
-                                    match keyValuePair with
-                                    | None -> None
-                                    | Some (key, theValue) ->
-                                      Some (key, theValue)
-                                  )
-                        (fun _ ->
-                                    failwith "shouldn't be here"
-                                    None
-                                  )
-                        )
-                    |> List.fold
-                        (fun acc curr ->
-                          match curr with
-                          | Some (key, value) -> acc |> Map.add key value
-                          | None -> acc
-                        )
-                        Map.empty
-                    |> succeed
-
-          variablesResult
-          |> mapR (fun variables ->
-                    { ExecutionPlan = executionPlan
-                      Variables = variables })
-
         | None ->
           invalidMsg <| sprintf "there was no query in the client's subscribe message!"
+        | Some query ->
+          query
+          |> decodeGraphQLQuery executor rawSubsPayload.OperationName rawSubsPayload.Variables
       | _ ->
         invalidMsg <| "for this message, payload was expected to be a \"subscribe\" payload object, but it wasn't."
-    | None ->
-      invalidMsg <| "payload is required for this message, but none was present."
+
 
   let toClientMessage (executor : Executor<'a>) (raw : RawMessage) : RopResult<ClientMessage, ClientMessageProtocolFailure> =
     match raw.Type with

@@ -111,6 +111,6 @@ type RawServerMessageConverter() =
         writer.WritePropertyName("payload")
         JsonSerializer.Serialize(writer, output, options)
       | ErrorMessages msgs ->
-        writer.WriteString("payload", String.Join("; ", msgs))
+        JsonSerializer.Serialize(writer, msgs, options)
 
     writer.WriteEndObject()

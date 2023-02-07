@@ -3,6 +3,7 @@ namespace GraphQLTransportWS
 open FSharp.Data.GraphQL.Execution
 open FSharp.Data.GraphQL.Types
 open System.Text.Json
+open System.Collections.Generic
 
 type RawSubscribePayload =
     { OperationName : string option
@@ -22,7 +23,7 @@ type RawMessage =
 type ServerRawPayload =
     | ServerStringPayload of string
     | ExecutionResult of Output
-    | ErrorMessages of string list
+    | ErrorMessages of NameValueLookup list
 
 type RawServerMessage =
     { Id : string option
@@ -48,7 +49,7 @@ type ServerMessage =
     | ServerPing
     | ServerPong
     | Next of id : string * payload : Output
-    | Error of id : string * err : string list
+    | Error of id : string * err : NameValueLookup list
     | Complete of id : string
 
 module CustomWebSocketStatus =

@@ -195,7 +195,13 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let safe_SendQueryOutput id output =
       match id with
       | SubsId id ->
-        safe_Send (Next (id, output))
+        let outputAsDict = output :> IDictionary<string, obj>
+        match outputAsDict.TryGetValue("errors") with
+        | true, theValue ->
+          safe_Send (Error (id, unbox theValue))
+        | false, _ ->
+          safe_Send (Next (id, output))
+
     let sendQueryOutputDelayedBy (cancToken: CancellationToken) (ms: int) id output =
       task {
             do! Async.StartAsTask(Async.Sleep ms, cancellationToken = cancToken)
@@ -210,11 +216,14 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             | Stream observableOutput ->
                 subscriptions
                 |> addClientSubscription id safe_SendQueryOutput observableOutput
-            | Deferred (data, _, observableOutput) ->
+            | Deferred (data, errors, observableOutput) ->
                 do! data
                     |> safe_SendQueryOutput id
-                subscriptions
-                |> addClientSubscription id (safe_SendQueryOutputDelayedBy 5000) observableOutput
+                if errors.IsEmpty then
+                  subscriptions
+                  |> addClientSubscription id (safe_SendQueryOutputDelayedBy 5000) observableOutput
+                else
+                  ()
             | Direct (data, _) ->
                 do! data
                     |> safe_SendQueryOutput id
