@@ -118,3 +118,19 @@ let ``Deserializes ClientPong with payload correctly`` () =
     | ClientPong (Some "pong!") -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
+
+[<Fact>]
+let ``Deserializes ClientComplete correctly``() =
+    let serializerOptions = new JsonSerializerOptions()
+    serializerOptions.Converters.Add(new GraphQLWsMessageConverter())
+
+    let input = "{\"id\": \"65fca2b5-f149-4a70-a055-5123dea4628f\", \"type\":\"complete\"}"
+
+    let resultRaw = JsonSerializer.Deserialize<GraphQLWsMessageRaw>(input, serializerOptions)
+    let result = resultRaw |> GraphQLWsMessageRawMapping.toWebSocketClientMessage
+
+    match result with
+    | ClientComplete id ->
+        Assert.Equal("65fca2b5-f149-4a70-a055-5123dea4628f", id)
+    | other ->
+        Assert.Fail(sprintf "unexpected actual value: '%A'" other)
