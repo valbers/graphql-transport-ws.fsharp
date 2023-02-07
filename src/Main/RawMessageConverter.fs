@@ -8,6 +8,9 @@ open System.Text.Json.Serialization
 type RawMessageConverter() =
   inherit JsonConverter<RawMessage>()
 
+  let raiseInvalidMsg explanation =
+    raise <| InvalidMessageException explanation
+
   let getOptionalString (reader : byref<Utf8JsonReader>) =
     if reader.TokenType.Equals(JsonTokenType.Null) then
       None
@@ -18,7 +21,7 @@ type RawMessageConverter() =
     if reader.Read() then
       getOptionalString(&reader)
     else
-      failwithf "was expecting a value for property \"%s\"" propertyName
+      raiseInvalidMsg <| sprintf "was expecting a value for property \"%s\"" propertyName
 
   let readSubscribePayload (reader : byref<Utf8JsonReader>) : RawSubscribePayload =
     let mutable operationName : string option = None
@@ -36,7 +39,7 @@ type RawMessageConverter() =
       | "extensions" ->
         extensions <- readPropertyValueAsAString "extensions" &reader
       | other ->
-        failwithf "unexpected property \"%s\" in payload object" other
+        raiseInvalidMsg <| sprintf "unexpected property \"%s\" in payload object" other
     { OperationName = operationName
       Query = query
       Variables = variables
@@ -51,11 +54,11 @@ type RawMessageConverter() =
         SubscribePayload (readSubscribePayload &reader)
         |> Some
       elif reader.TokenType.Equals(JsonTokenType.Null) then
-        failwith "was expecting a value for property \"payload\""
+        raiseInvalidMsg <| "was expecting a value for property \"payload\""
       else
-        failwith "Not implemented yet. Uh-oh, this is a bug."
+        raiseInvalidMsg <| sprintf "payload is a \"%A\", which is not supported" reader.TokenType
     else
-      failwith "was expecting a value for property \"payload\""
+      raiseInvalidMsg <| "was expecting a value for property \"payload\""
 
   override __.Read(reader : byref<Utf8JsonReader>, typeToConvert: Type, options: JsonSerializerOptions) : RawMessage =
     if not (reader.TokenType.Equals(JsonTokenType.StartObject))
@@ -73,7 +76,7 @@ type RawMessageConverter() =
         | "payload" ->
           payload <- readPayload &reader
         | other ->
-          failwithf "unknown property \"%s\"" other
+          raiseInvalidMsg <| sprintf "unknown property \"%s\"" other
       { Id = id
         Type = theType
         Payload = payload }

@@ -28,7 +28,9 @@ type ClientMessage =
     | ClientPong of payload: string option
     | Subscribe of id: string * query: GraphQLQuery
     | ClientComplete of id: string
-    | InvalidMessage of explanation: string
+
+type ClientMessageProtocolFailure =
+    | InvalidMessage of code: int * explanation: string
 
 type ServerMessage =
     | ConnectionAck

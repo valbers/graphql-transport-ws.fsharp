@@ -2,21 +2,32 @@ namespace GraphQLTransportWS
 
 module MessageMapping =
   open FSharp.Data.GraphQL
+  open Rop
 
-  let requireId (raw : RawMessage) : string =
+  /// From the spec: "Receiving a message of a type or format which is not specified in this document will result in an immediate socket closure with the event 4400: &lt;error-message&gt;.
+  /// The &lt;error-message&gt; can be vaguely descriptive on why the received message is invalid."
+  let invalidMsg (explanation : string) =
+    InvalidMessage (4400, explanation)
+    |> fail
+
+  let private requireId (raw : RawMessage) : RopResult<string, ClientMessageProtocolFailure> =
     match raw.Id with
-    | Some s -> s
-    | None -> failwith "property \"id\" is required but was not there"
+    | Some s -> succeed s
+    | None -> invalidMsg <| "property \"id\" is required for this message but was not present."
 
-  let requirePayloadToBeAnOptionalString (payload : RawPayload option) : string option =
+  let private requirePayloadToBeAnOptionalString (payload : RawPayload option) : RopResult<string option, ClientMessageProtocolFailure> =
     match payload with
     | Some p  ->
       match p with
-      | StringPayload strPayload -> Some strPayload
-      | _ -> failwith "payload was expected to be a string, but it wasn't"
-    | None -> None
+      | StringPayload strPayload ->
+        Some strPayload
+        |> succeed
+      | SubscribePayload _ ->
+        invalidMsg <| "for this message, payload was expected to be an optional string, but it was a \"subscribe\" payload instead."
+    | None ->
+      succeed None
 
-  let requireSubscribePayload (executor : Executor<'a>) (payload : RawPayload option) : GraphQLQuery =
+  let private requireSubscribePayload (executor : Executor<'a>) (payload : RawPayload option) : RopResult<GraphQLQuery, ClientMessageProtocolFailure> =
     match payload with
     | Some p ->
       match p with
@@ -25,29 +36,44 @@ module MessageMapping =
         | Some query ->
           { ExecutionPlan = executor.CreateExecutionPlan(query)
             Variables = Map.empty }
+          |> succeed
         | None ->
-          failwith "there was no query in subscribe message!"
+          invalidMsg <| sprintf "there was no query in the client's subscribe message!"
       | _ ->
-        failwith "payload was expected to be a subscribe payload object, but it wasn't."
+        invalidMsg <| "for this message, payload was expected to be a \"subscribe\" payload object, but it wasn't."
     | None ->
-      failwith "payload is required for this message, but none was available"
+      invalidMsg <| "payload is required for this message, but none was present."
 
-  let toClientMessage (executor : Executor<'a>) (raw : RawMessage) : ClientMessage =
+  let toClientMessage (executor : Executor<'a>) (raw : RawMessage) : RopResult<ClientMessage, ClientMessageProtocolFailure> =
     match raw.Type with
     | None ->
-      failwithf "property \"type\" was not found in the client message"
+      invalidMsg <| sprintf "message type was not specified by client."
     | Some "connection_init" ->
-      ConnectionInit (raw.Payload |> requirePayloadToBeAnOptionalString)
+      raw.Payload
+      |> requirePayloadToBeAnOptionalString
+      |> mapR ConnectionInit
     | Some "ping" ->
-      ClientPing (raw.Payload |> requirePayloadToBeAnOptionalString)
+      raw.Payload
+      |> requirePayloadToBeAnOptionalString
+      |> mapR ClientPing
     | Some "pong" ->
-      ClientPong (raw.Payload |> requirePayloadToBeAnOptionalString)
+      raw.Payload
+      |> requirePayloadToBeAnOptionalString
+      |> mapR ClientPong
     | Some "complete" ->
-      ClientComplete (raw |> requireId)
+      raw
+      |> requireId
+      |> mapR ClientComplete
     | Some "subscribe" ->
-      let id = raw |> requireId
-      let payload = raw.Payload |> requireSubscribePayload executor
-      Subscribe (id, payload)
+      raw
+      |> requireId
+      |> bindR
+        (fun id ->
+          raw.Payload
+          |> requireSubscribePayload executor
+          |> mapR (fun payload -> (id, payload))
+        )
+      |> mapR Subscribe
     | Some other ->
-      failwithf "type \"%s\" is not supported as a client message type" other
+      invalidMsg <| sprintf "invalid type \"%s\" specified by client." other
 

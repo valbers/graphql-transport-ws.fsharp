@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="TestSchema.fs" />
     <Compile Include="SerializationTests.fs" />
+    <Compile Include="InvalidMessageTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

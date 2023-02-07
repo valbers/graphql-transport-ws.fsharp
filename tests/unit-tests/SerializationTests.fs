@@ -1,5 +1,6 @@
-module Tests
+module SerializationTests
 
+open GraphQLTransportWS.Rop
 open UnitTest
 open GraphQLTransportWS
 open System
@@ -20,7 +21,7 @@ let ``Deserializes ConnectionInit correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ConnectionInit None -> () // <-- expected
+    | Success (ConnectionInit None, _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -37,7 +38,7 @@ let ``Deserializes ConnectionInit with payload correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ConnectionInit (Some "hello") -> () // <-- expected
+    | Success (ConnectionInit (Some "hello"), _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -54,7 +55,7 @@ let ``Deserializes ClientPing correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ClientPing None -> () // <-- expected
+    | Success (ClientPing None, _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value '%A'" other)
 
@@ -71,7 +72,7 @@ let ``Deserializes ClientPing with payload correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ClientPing (Some "ping!") -> () // <-- expected
+    | Success (ClientPing (Some "ping!"), _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value '%A" other)
 
@@ -88,7 +89,7 @@ let ``Deserializes ClientPong correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ClientPong None -> () // <-- expected
+    | Success (ClientPong None, _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -105,7 +106,7 @@ let ``Deserializes ClientPong with payload correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ClientPong (Some "pong!") -> () // <-- expected
+    | Success (ClientPong (Some "pong!"), _) -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -122,7 +123,7 @@ let ``Deserializes ClientComplete correctly``() =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | ClientComplete id ->
+    | Success (ClientComplete id, _) ->
         Assert.Equal("65fca2b5-f149-4a70-a055-5123dea4628f", id)
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
@@ -148,7 +149,7 @@ let ``Deserializes client subscription correctly`` () =
         |> MessageMapping.toClientMessage (TestSchema.executor)
 
     match result with
-    | Subscribe (id, payload) ->
+    | Success (Subscribe (id, payload), _) ->
         Assert.Equal("b5d4d2ff-d262-4882-a7b9-d6aec5e4faa6", id)
         Assert.Equal(1, payload.ExecutionPlan.Operation.SelectionSet.Length)
         let watchMoonSelection = payload.ExecutionPlan.Operation.SelectionSet |> List.head

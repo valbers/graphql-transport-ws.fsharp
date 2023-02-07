@@ -50,7 +50,9 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       task { return "dummySerializedServerMessage" }
 
   let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
-    task { return ConnectionInit None }
+    task {
+      return JsonSerializer.Deserialize<RawMessage>(msg, jsonOptions.SerializerOptions)
+    }
 
   let isSocketOpen (theSocket : WebSocket) =
     not (theSocket.State = WebSocketState.Aborted) &&
@@ -61,7 +63,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     not (theSocket.State = WebSocketState.Aborted) &&
     not (theSocket.State = WebSocketState.Closed)
 
-  let receiveMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) =
+  let receiveMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) : Task<RopResult<ClientMessage, ClientMessageProtocolFailure> option> =
     task {
       let buffer = Array.zeroCreate 4096
       let completeMessage = new List<byte>()
@@ -84,8 +86,17 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       if String.IsNullOrWhiteSpace message then
         return None
       else
-        let! deserializedMsg = deserializeClientMessage jsonOptions message
-        return Some deserializedMsg
+        try
+          let! deserializedRawMsg = deserializeClientMessage jsonOptions message
+          return
+            deserializedRawMsg
+            |> MessageMapping.toClientMessage executor
+            |> Some
+        with :? JsonException as e ->
+          printfn "%s" (e.ToString())
+          return
+            (MessageMapping.invalidMsg <| "invalid json in client message"
+            |> Some)
     }
 
   let sendMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (socket : WebSocket) (message : ServerMessage) =
@@ -167,6 +178,15 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let logMsgWithIdReceived id msgAsStr =
         printfn "%s (id: %s)" msgAsStr id
 
+    let tryToGracefullyCloseSocket theSocket =
+      task {
+        if theSocket |> canCloseSocket
+        then
+          do! theSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure", new CancellationToken())
+        else
+          ()
+      }
+
     // <--------------
     // <-- Helpers --|
     // <--------------
@@ -183,15 +203,20 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                 printfn "Warn: websocket socket received empty message! (socket state = %A)" socket.State
             | Some msg ->
                 match msg with
-                | ConnectionInit p ->
+                | Failure failureMsgs ->
+                    "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
+                    match failureMsgs |> List.head with
+                    | InvalidMessage (code, explanation) ->
+                      do! socket.CloseAsync(enum code, explanation, cancellationToken)
+                | Success (ConnectionInit p, _) ->
                     "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
                     do! ConnectionAck |> safe_Send
-                | ClientPing p ->
+                | Success (ClientPing p, _) ->
                     "ClientPing" |> logMsgReceivedWithOptionalPayload p
                     do! ServerPong None |> safe_Send
-                | ClientPong p ->
+                | Success (ClientPong p, _) ->
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
-                | Subscribe (id, query) ->
+                | Success (Subscribe (id, query), _) ->
                     "Subscribe" |> logMsgWithIdReceived id
                     let! planExecutionResult =
                         Async.StartAsTask (
@@ -200,22 +225,19 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                         )
                     do! planExecutionResult
                         |> safe_ApplyPlanExecutionResult id
-                | ClientComplete id ->
+                | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
                     id |> GraphQLSubscriptionsManagement.removeSubscription
                     do! Complete id |> safe_Send
-                | InvalidMessage explanation ->
-                    "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
-                    do! socket.CloseAsync(enum CustomWebSocketStatus.invalidMessage, explanation, cancellationToken)
         printfn "Leaving graphql-ws connection loop..."
-        if socket |> canCloseSocket
-        then
-          do! socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure", new CancellationToken())
-        else
-          ()
-      with // TODO: MAKE A PROPER GRAPHQL ERROR HANDLING!
+        do! socket |> tryToGracefullyCloseSocket
+      with
       | ex ->
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
+        // at this point, only something really weird must have happened.
+        // In order to avoid faulty state scenarios and unimagined damages,
+        // just close the socket without further ado.
+        do! socket |> tryToGracefullyCloseSocket
     }
 
   let waitForConnectionInit (jsonOptions : JsonOptions) (schemaExecutor : Executor<'Root>) (replacements : Map<string, obj>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
