@@ -52,15 +52,29 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
   let deserializeClientMessage (jsonOptions: JsonOptions) (msg: string) =
     task { return ConnectionInit None }
 
+  let isSocketOpen (theSocket : WebSocket) =
+    not (theSocket.State = WebSocketState.Aborted) &&
+    not (theSocket.State = WebSocketState.Closed) &&
+    not (theSocket.State = WebSocketState.CloseReceived)
+
+  let canCloseSocket (theSocket : WebSocket) =
+    not (theSocket.State = WebSocketState.Aborted) &&
+    not (theSocket.State = WebSocketState.Closed)
+
   let receiveMessageViaSocket (cancellationToken : CancellationToken) (jsonOptions: JsonOptions) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) =
     task {
       let buffer = Array.zeroCreate 4096
       let completeMessage = new List<byte>()
       let mutable segmentResponse : WebSocketReceiveResult = null
-      while (segmentResponse = null) || (not segmentResponse.EndOfMessage) do
-        let! r = socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken)
-        segmentResponse <- r
-        completeMessage.AddRange(new ArraySegment<byte>(buffer, 0, r.Count))
+      while (not cancellationToken.IsCancellationRequested) &&
+            socket |> isSocketOpen &&
+            ((segmentResponse = null) || (not segmentResponse.EndOfMessage)) do
+        try
+          let! r = socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken)
+          segmentResponse <- r
+          completeMessage.AddRange(new ArraySegment<byte>(buffer, 0, r.Count))
+        with :? OperationCanceledException ->
+          ()
 
       let message =
         completeMessage
@@ -108,7 +122,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     // Helpers -->
     // ---------->
     let safe_SendMessageViaSocket = sendMessageViaSocket cancellationToken
-    let safe_ReceiveMessageViaSocket = receiveMessageViaSocket cancellationToken
+    let safe_ReceiveMessageViaSocket = receiveMessageViaSocket (new CancellationToken())
     let safe_AddClientSubscription = addClientSubscription cancellationToken
 
     let safe_Send = safe_SendMessageViaSocket jsonOptions socket
@@ -153,7 +167,6 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let logMsgWithIdReceived id msgAsStr =
         printfn "%s (id: %s)" msgAsStr id
 
-    let mutable socketClosed = false
     // <--------------
     // <-- Helpers --|
     // <--------------
@@ -163,41 +176,68 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     // ------->
     task {
       try
-          while not cancellationToken.IsCancellationRequested && not socketClosed do
-              let! receivedMessage = safe_Receive()
-              match receivedMessage with
-              | None ->
-                  printfn "Warn: websocket socket received empty message!"
-              | Some msg ->
-                  match msg with
-                  | ConnectionInit p ->
-                      "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
-                      do! ConnectionAck |> safe_Send
-                  | ClientPing p ->
-                      "ClientPing" |> logMsgReceivedWithOptionalPayload p
-                      do! ServerPong None |> safe_Send
-                  | ClientPong p ->
-                      "ClientPong" |> logMsgReceivedWithOptionalPayload p
-                  | Subscribe (id, query) ->
-                      "Subscribe" |> logMsgWithIdReceived id
-                      let! planExecutionResult =
-                          Async.StartAsTask (
-                              executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables),
-                              cancellationToken = cancellationToken
-                          )
-                      do! planExecutionResult
-                          |> safe_ApplyPlanExecutionResult id
-                  | ClientComplete id ->
-                      "ClientComplete" |> logMsgWithIdReceived id
-                      id |> GraphQLSubscriptionsManagement.removeSubscription
-                      do! Complete id |> safe_Send
-                  | InvalidMessage explanation ->
-                      "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
-                      do! socket.CloseAsync(enum CustomWebSocketStatus.invalidMessage, explanation, cancellationToken)
-                      socketClosed <- true
+        while not cancellationToken.IsCancellationRequested && socket |> isSocketOpen do
+            let! receivedMessage = safe_Receive()
+            match receivedMessage with
+            | None ->
+                printfn "Warn: websocket socket received empty message! (socket state = %A)" socket.State
+            | Some msg ->
+                match msg with
+                | ConnectionInit p ->
+                    "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
+                    do! ConnectionAck |> safe_Send
+                | ClientPing p ->
+                    "ClientPing" |> logMsgReceivedWithOptionalPayload p
+                    do! ServerPong None |> safe_Send
+                | ClientPong p ->
+                    "ClientPong" |> logMsgReceivedWithOptionalPayload p
+                | Subscribe (id, query) ->
+                    "Subscribe" |> logMsgWithIdReceived id
+                    let! planExecutionResult =
+                        Async.StartAsTask (
+                            executor.AsyncExecute(query.ExecutionPlan, root(), query.Variables),
+                            cancellationToken = cancellationToken
+                        )
+                    do! planExecutionResult
+                        |> safe_ApplyPlanExecutionResult id
+                | ClientComplete id ->
+                    "ClientComplete" |> logMsgWithIdReceived id
+                    id |> GraphQLSubscriptionsManagement.removeSubscription
+                    do! Complete id |> safe_Send
+                | InvalidMessage explanation ->
+                    "InvalidMessage" |> logMsgReceivedWithOptionalPayload None
+                    do! socket.CloseAsync(enum CustomWebSocketStatus.invalidMessage, explanation, cancellationToken)
+        printfn "Leaving graphql-ws connection loop..."
+        if socket |> canCloseSocket
+        then
+          do! socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure", new CancellationToken())
+        else
+          ()
       with // TODO: MAKE A PROPER GRAPHQL ERROR HANDLING!
       | ex ->
         printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
+    }
+
+  let waitForConnectionInit (jsonOptions : JsonOptions) (schemaExecutor : Executor<'Root>) (replacements : Map<string, obj>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
+    task {
+      let cancelAfter = new CancellationTokenSource()
+      cancelAfter.CancelAfter(connectionInitTimeoutInMs)
+      let cancelCancel = cancelAfter.Token.Register(fun _ ->
+        socket.CloseAsync(enum 4408, "ConnectionInit timeout", new CancellationToken())
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+      )
+      let! _ = Task.Run<bool>((fun _ ->
+        task {
+          printfn "Waiting for ConnectionInit..."
+          let! _ = receiveMessageViaSocket (new CancellationToken()) jsonOptions options.SchemaExecutor Map.empty socket
+          cancelCancel.Unregister() |> ignore
+          return true
+        }), cancelAfter.Token)
+      if not cancelAfter.Token.IsCancellationRequested then
+        return (succeed ())
+      else
+        return (fail "ConnectionInit timeout")
     }
 
   member __.InvokeAsync(ctx : HttpContext) =
@@ -207,15 +247,29 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       else
         if ctx.WebSockets.IsWebSocketRequest then
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
-          let cancellationToken =
-            (CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, applicationLifetime.ApplicationStopping).Token)
-          let safe_HandleMessages = handleMessages cancellationToken
-          try
-            do! socket
-                |> safe_HandleMessages jsonOptions.Value options.SchemaExecutor options.RootFactory
-          with
-            | ex ->
-              printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
+          let! connectionInitResult = socket |> waitForConnectionInit jsonOptions.Value options.SchemaExecutor Map.empty options.ConnectionInitTimeoutInMs
+          match connectionInitResult with
+          | Failure errMsg ->
+            printfn "%A" errMsg
+          | Success _ ->
+            do! ConnectionAck |> (socket |> sendMessageViaSocket (new CancellationToken()) jsonOptions.Value)
+            let longRunningCancellationToken =
+              (CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, applicationLifetime.ApplicationStopping).Token)
+            longRunningCancellationToken.Register(fun _ ->
+              if socket |> canCloseSocket then
+                socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure", new CancellationToken())
+                |> Async.AwaitTask
+                |> Async.RunSynchronously
+              else
+                ()
+            ) |> ignore
+            let safe_HandleMessages = handleMessages longRunningCancellationToken
+            try
+              do! socket
+                  |> safe_HandleMessages jsonOptions.Value options.SchemaExecutor options.RootFactory
+            with
+              | ex ->
+                printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
         else
           do! next.Invoke(ctx)
     }

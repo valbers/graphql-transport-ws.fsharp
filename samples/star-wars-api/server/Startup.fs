@@ -29,6 +29,7 @@ type Startup private () =
                 SchemaExecutor = Schema.executor
                 RootFactory = fun () -> { RequestId = Guid.NewGuid().ToString() }
                 EndpointUrl = graphqlEndpointUrl
+                ConnectionInitTimeoutInMs = 3000
              }
         )
         |> ignore
