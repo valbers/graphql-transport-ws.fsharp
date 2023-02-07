@@ -237,7 +237,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                       do! socket.CloseAsync(enum code, explanation, cancellationToken)
                 | Success (ConnectionInit p, _) ->
                     "ConnectionInit" |> logMsgReceivedWithOptionalPayload p
-                    do! ConnectionAck |> safe_Send
+                    do! socket.CloseAsync(
+                      enum CustomWebSocketStatus.tooManyInitializationRequests,
+                      "too many initialization requests",
+                      cancellationToken)
                 | Success (ClientPing p, _) ->
                     "ClientPing" |> logMsgReceivedWithOptionalPayload p
                     do! ServerPong |> safe_Send
@@ -276,15 +279,27 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         |> Async.AwaitTask
         |> Async.RunSynchronously
       )
-      let! _ = Task.Run<bool>((fun _ ->
+      let! connectionInitSucceeded = Task.Run<bool>((fun _ ->
         task {
           printfn "Waiting for ConnectionInit..."
-          let! _ = receiveMessageViaSocket (new CancellationToken()) jsonOptions schemaExecutor replacements socket
-          detonationRegistration.Unregister() |> ignore
-          return true
+          let! receivedMessage = receiveMessageViaSocket (new CancellationToken()) jsonOptions schemaExecutor replacements socket
+          match receivedMessage with
+          | Some (Success (ConnectionInit payload, _)) ->
+            do! ConnectionAck |> sendMessageViaSocket (new CancellationToken()) jsonOptions socket
+            detonationRegistration.Unregister() |> ignore
+            return true
+          | Some (Failure [InvalidMessage (code, explanation)]) ->
+            do! socket.CloseAsync(enum code, explanation, new CancellationToken())
+            return false
+          | _ ->
+            do! socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure", new CancellationToken())
+            return false
         }), timerTokenSource.Token)
-      if not timerTokenSource.Token.IsCancellationRequested then
-        return (succeed ())
+      if (not timerTokenSource.Token.IsCancellationRequested) then
+        if connectionInitSucceeded then
+          return (succeed ())
+        else
+          return (fail "ConnectionInit failed (not because of timeout)")
       else
         return (fail "ConnectionInit timeout")
     }

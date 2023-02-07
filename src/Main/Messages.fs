@@ -52,3 +52,4 @@ type ServerMessage =
 
 module CustomWebSocketStatus =
     let invalidMessage = 4400
+    let tooManyInitializationRequests = 4429
