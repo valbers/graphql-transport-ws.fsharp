@@ -1,4 +1,4 @@
-﻿namespace Main
+﻿namespace GraphQLTransportWS
 
 module Say =
     let hello name =

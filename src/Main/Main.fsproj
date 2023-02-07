@@ -6,7 +6,19 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Rop/Rop.fs" />
+    <Compile Include="Rop/RopAsync.fs" />
+    <Compile Include="WebSocketMessages.fs" />
+    <Compile Include="GraphQLWebsocketMiddleware.fs" />
     <Compile Include="Library.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Data.GraphQL.Server" Version="1.0.7" />
   </ItemGroup>
 
 </Project>
