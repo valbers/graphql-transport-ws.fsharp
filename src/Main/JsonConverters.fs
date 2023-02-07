@@ -5,6 +5,38 @@ open System.Text.Json
 open System.Text.Json.Serialization
 
 [<Sealed>]
+type WebSocketClientMessageConverter() =
+  inherit JsonConverter<WebSocketClientMessage>()
+
+  override __.Read(reader : byref<Utf8JsonReader>, typeToConvert: Type, options: JsonSerializerOptions) =
+    if not (reader.TokenType.Equals(JsonTokenType.StartObject))
+      then raise (new JsonException((sprintf "reader's first token was not \"%A\", but \"%A\"" JsonTokenType.StartObject reader.TokenType)))
+    else
+      reader.Read() |> ignore // PropertyName
+      let messageTypePropName = reader.GetString()
+      if not (messageTypePropName = "type")
+      then
+        raise (new JsonException((sprintf "expected prop. \"type\" but got \"%s\" instead" messageTypePropName)))
+      else
+        reader.Read() |> ignore // PropertyValue
+        let messageType = reader.GetString()
+        match messageType with
+        | "connection_init" ->
+          while reader.Read() do ()
+          ConnectionInit None
+        | "ping" ->
+          while reader.Read() do ()
+          ClientPing None
+        | "pong" ->
+          while reader.Read() do ()
+          ClientPong None
+        | other ->
+          raise (new JsonException((sprintf "type \"%s\" is not supported" other)))
+
+  override __.Write(writer : Utf8JsonWriter, value : WebSocketClientMessage, options : JsonSerializerOptions) =
+    failwith "serializing a WebSocketClientMessage is not supported (yet(?))"
+
+[<Sealed>]
 type WebSocketServerMessageConverter() =
   inherit JsonConverter<WebSocketServerMessage>()
 
