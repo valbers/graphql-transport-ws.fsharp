@@ -299,7 +299,6 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                 | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
                     subscriptions |> GraphQLSubscriptionsManagement.removeSubscription (id)
-                    do! Complete id |> safe_Send
         printfn "Leaving graphql-ws connection loop..."
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
       with
