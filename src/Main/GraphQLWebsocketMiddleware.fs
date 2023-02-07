@@ -198,7 +198,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     }
 
   let tryToGracefullyCloseSocketWithDefaultBehavior =
-    tryToGracefullyCloseSocket (WebSocketCloseStatus.NormalClosure, "NormalClosure")
+    tryToGracefullyCloseSocket (WebSocketCloseStatus.NormalClosure, "Normal Closure")
 
   let handleMessages (cancellationToken: CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
     let subscriptions = SubsDict <| new Dictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>()
