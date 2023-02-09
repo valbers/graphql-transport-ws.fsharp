@@ -11,14 +11,10 @@ type RawSubscribePayload =
       Variables : JsonDocument option
       Extensions : string option }
 
-type RawPayload =
-    | StringPayload of string
-    | SubscribePayload of RawSubscribePayload
-
 type RawMessage =
     { Id : string option
       Type : string option
-      Payload : RawPayload option }
+      Payload : JsonDocument option }
 
 type ServerRawPayload =
     | ServerStringPayload of string
@@ -35,9 +31,9 @@ type GraphQLQuery =
       Variables : Map<string, obj> }
 
 type ClientMessage =
-    | ConnectionInit of payload: string option
-    | ClientPing of payload: string option
-    | ClientPong of payload: string option
+    | ConnectionInit of payload: JsonDocument option
+    | ClientPing of payload: JsonDocument option
+    | ClientPong of payload: JsonDocument option
     | Subscribe of id: string * query: GraphQLQuery
     | ClientComplete of id: string
 

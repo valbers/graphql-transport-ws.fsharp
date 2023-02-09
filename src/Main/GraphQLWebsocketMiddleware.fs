@@ -87,7 +87,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     task {
       return
         JsonSerializer.Deserialize<RawMessage>(msg, serializerOptions)
-        |> MessageMapping.toClientMessage executor
+        |> MessageMapping.toClientMessage serializerOptions executor
     }
 
   let isSocketOpen (theSocket : WebSocket) =
@@ -358,6 +358,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
   member __.InvokeAsync(ctx : HttpContext) =
     task {
       let jsonOptions = new JsonOptions()
+      jsonOptions.SerializerOptions.PropertyNameCaseInsensitive <- true
       jsonOptions.SerializerOptions.Converters.Add(new RawMessageConverter())
       jsonOptions.SerializerOptions.Converters.Add(new RawServerMessageConverter())
       let serializerOptions = jsonOptions.SerializerOptions

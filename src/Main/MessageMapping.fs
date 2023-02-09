@@ -17,18 +17,6 @@ module MessageMapping =
     | Some s -> succeed s
     | None -> invalidMsg <| "property \"id\" is required for this message but was not present."
 
-  let private requirePayloadToBeAnOptionalString (payload : RawPayload option) : RopResult<string option, ClientMessageProtocolFailure> =
-    match payload with
-    | Some p  ->
-      match p with
-      | StringPayload strPayload ->
-        Some strPayload
-        |> succeed
-      | SubscribePayload _ ->
-        invalidMsg <| "for this message, payload was expected to be an optional string, but it was a \"subscribe\" payload instead."
-    | None ->
-      succeed None
-
   let private resolveVariables (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
     try
       if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
@@ -77,39 +65,37 @@ module MessageMapping =
               { ExecutionPlan = executionPlan
                 Variables = variables })
 
-  let private requireSubscribePayload (executor : Executor<'a>) (payload : RawPayload option) : RopResult<GraphQLQuery, ClientMessageProtocolFailure> =
+  let private requireSubscribePayload (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (payload : JsonDocument option) : RopResult<GraphQLQuery, ClientMessageProtocolFailure> =
     match payload with
     | None ->
       invalidMsg <| "payload is required for this message, but none was present."
     | Some p ->
-      match p with
-      | SubscribePayload rawSubsPayload ->
-        match rawSubsPayload.Query with
+      let rawSubsPayload = JsonSerializer.Deserialize<RawSubscribePayload option>(p, serializerOptions)
+      match rawSubsPayload with
+      | None ->
+        invalidMsg <| "payload is required for this message, but none was present."
+      | Some subscribePayload ->
+        match subscribePayload.Query with
         | None ->
           invalidMsg <| sprintf "there was no query in the client's subscribe message!"
         | Some query ->
           query
-          |> decodeGraphQLQuery executor rawSubsPayload.OperationName rawSubsPayload.Variables
-      | _ ->
-        invalidMsg <| "for this message, payload was expected to be a \"subscribe\" payload object, but it wasn't."
+          |> decodeGraphQLQuery executor subscribePayload.OperationName subscribePayload.Variables
 
 
-  let toClientMessage (executor : Executor<'a>) (raw : RawMessage) : RopResult<ClientMessage, ClientMessageProtocolFailure> =
+  let toClientMessage (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (raw : RawMessage) : RopResult<ClientMessage, ClientMessageProtocolFailure> =
     match raw.Type with
     | None ->
       invalidMsg <| sprintf "message type was not specified by client."
     | Some "connection_init" ->
-      raw.Payload
-      |> requirePayloadToBeAnOptionalString
-      |> mapR ConnectionInit
+      ConnectionInit raw.Payload
+      |> succeed
     | Some "ping" ->
-      raw.Payload
-      |> requirePayloadToBeAnOptionalString
-      |> mapR ClientPing
+      ClientPing raw.Payload
+      |> succeed
     | Some "pong" ->
-      raw.Payload
-      |> requirePayloadToBeAnOptionalString
-      |> mapR ClientPong
+      ClientPong raw.Payload
+      |> succeed
     | Some "complete" ->
       raw
       |> requireId
@@ -120,7 +106,7 @@ module MessageMapping =
       |> bindR
         (fun id ->
           raw.Payload
-          |> requireSubscribePayload executor
+          |> requireSubscribePayload serializerOptions executor
           |> mapR (fun payload -> (id, payload))
         )
       |> mapR Subscribe

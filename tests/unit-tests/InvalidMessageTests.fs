@@ -10,9 +10,11 @@ open FSharp.Data.GraphQL.Ast
 
 let toClientMessage (theInput : string) =
     let serializerOptions = new JsonSerializerOptions()
+    serializerOptions.PropertyNameCaseInsensitive <- true
     serializerOptions.Converters.Add(new RawMessageConverter())
+    serializerOptions.Converters.Add(new RawServerMessageConverter())
     JsonSerializer.Deserialize<RawMessage>(theInput, serializerOptions)
-    |> MessageMapping.toClientMessage TestSchema.executor
+    |> MessageMapping.toClientMessage serializerOptions TestSchema.executor
 
 let willResultInInvalidMessage expectedExplanation input =
     try
@@ -28,6 +30,8 @@ let willResultInInvalidMessage expectedExplanation input =
         | other ->
             Assert.Fail(sprintf "unexpected actual value: '%A'" other)
     with
+    | :? JsonException as ex ->
+        Assert.Equal(expectedExplanation, ex.Message)
     | :? InvalidMessageException as ex ->
         Assert.Equal(expectedExplanation, ex.Message)
 
@@ -55,7 +59,7 @@ let ``type not specified`` () =
           "payload": "hello, let us connect"
        }
     """
-    |> willResultInInvalidMessage "message type was not specified by client."
+    |> willResultInInvalidMessage "property \"type\" is missing"
 
 [<Fact>]
 let ``no payload in subscribe message`` () =
@@ -74,7 +78,7 @@ let ``null payload json in subscribe message`` () =
           "payload": null
        }
     """
-    |> willResultInInvalidMessage "was expecting a value for property \"payload\""
+    |> willResultInInvalidMessage "payload is required for this message, but none was present."
 
 [<Fact>]
 let ``payload type of number in subscribe message`` () =
@@ -84,16 +88,7 @@ let ``payload type of number in subscribe message`` () =
         "payload": 42
     }
     """
-    |> willResultInInvalidMessage "payload is a \"Number\", which is not supported"
-
-[<Fact>]
-let ``payload type of number in connection_init message is not supported`` () =
-    """{
-        "type": "connection_init",
-        "payload": 42
-    }
-    """
-    |> willResultInInvalidMessage "payload is a \"Number\", which is not supported"
+    |> willResultInInvalidMessage "The JSON value could not be converted to GraphQLTransportWS.RawSubscribePayload. Path: $ | LineNumber: 0 | BytePositionInLine: 2."
 
 [<Fact>]
 let ``no id in subscribe message`` () =
@@ -107,17 +102,6 @@ let ``no id in subscribe message`` () =
     |> willResultInInvalidMessage "property \"id\" is required for this message but was not present."
 
 [<Fact>]
-let ``subscribe payload format wrongly used in connection_init`` () =
-    """{
-          "type": "connection_init",
-          "payload": {
-            "query": "subscription { watchMoon(id: \"1\") { id name isMoon } }"
-          }
-       }
-    """
-    |> willResultInInvalidMessage "for this message, payload was expected to be an optional string, but it was a \"subscribe\" payload instead."
-
-[<Fact>]
 let ``string payload wrongly used in subscribe`` () =
     """{
           "type": "subscribe",
@@ -125,27 +109,7 @@ let ``string payload wrongly used in subscribe`` () =
           "payload": "{\"query\": \"subscription { watchMoon(id: \\\"1\\\") { id name isMoon } }\"}"
        }
     """
-    |> willResultInInvalidMessage "for this message, payload was expected to be a \"subscribe\" payload object, but it wasn't."
-
-[<Fact>]
-let ``ping payload object is totally unknown`` () =
-    """{
-          "type": "ping",
-          "payload": { "isEmergency": true }
-       }
-    """
-    |> willResultInInvalidMessage "unexpected property \"isEmergency\" in payload object"
-
-[<Fact>]
-let ``subscribe payload object is wrongly used in ping``() =
-    """{
-        "type": "ping",
-        "payload": {
-        "query": "subscription { watchMoon(id: \"1\") { id name isMoon } }"
-        }
-    }
-    """
-    |> willResultInInvalidMessage "for this message, payload was expected to be an optional string, but it was a \"subscribe\" payload instead."
+    |> willResultInInvalidMessage "The JSON value could not be converted to GraphQLTransportWS.RawSubscribePayload. Path: $ | LineNumber: 0 | BytePositionInLine: 79."
 
 [<Fact>]
 let ``id is incorrectly a number in a subscribe message`` () =
