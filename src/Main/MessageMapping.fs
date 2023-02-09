@@ -2,7 +2,6 @@ namespace GraphQLTransportWS
 
 module MessageMapping =
   open FSharp.Data.GraphQL
-  open FSharp.Data.GraphQL.Types.Patterns
   open Rop
   open System.Text.Json
 
@@ -17,7 +16,7 @@ module MessageMapping =
     | Some s -> succeed s
     | None -> invalidMsg <| "property \"id\" is required for this message but was not present."
 
-  let private resolveVariables (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
+  let private resolveVariables (serializerOptions : JsonSerializerOptions) (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
     try
       if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
         let offendingValueKind = variableValuesObj.RootElement.ValueKind
@@ -37,7 +36,7 @@ module MessageMapping =
                     elif providedValue.Value.ValueKind.Equals(JsonValueKind.String) then
                       providedValue.Value.GetString() :> obj
                     else
-                      JsonSerializer.Deserialize(providedValue.Value, new JsonSerializerOptions()) :> obj
+                      JsonSerializer.Deserialize(providedValue.Value, serializerOptions) :> obj
                   (expectedVariable.Name, boxedValue)
                 )
             )
@@ -45,7 +44,7 @@ module MessageMapping =
     finally
       variableValuesObj.Dispose()
 
-  let decodeGraphQLQuery (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
+  let decodeGraphQLQuery (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
     let executionPlan =
       match operationName with
       | Some operationName ->
@@ -57,7 +56,7 @@ module MessageMapping =
       | None -> succeed <| Map.empty // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
       | Some variableValuesObj ->
         variableValuesObj
-        |> resolveVariables executionPlan.Variables
+        |> resolveVariables serializerOptions executionPlan.Variables
         |> mapMessagesR (fun errMsg -> InvalidMessage (CustomWebSocketStatus.invalidMessage, errMsg))
         |> mapR Map.ofList
     variablesResult
@@ -80,7 +79,7 @@ module MessageMapping =
           invalidMsg <| sprintf "there was no query in the client's subscribe message!"
         | Some query ->
           query
-          |> decodeGraphQLQuery executor subscribePayload.OperationName subscribePayload.Variables
+          |> decodeGraphQLQuery serializerOptions executor subscribePayload.OperationName subscribePayload.Variables
 
 
   let toClientMessage (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (raw : RawMessage) : RopResult<ClientMessage, ClientMessageProtocolFailure> =
