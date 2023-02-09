@@ -1,34 +1,23 @@
 module InvalidMessageTests
 
-open GraphQLTransportWS.Rop
 open UnitTest
 open GraphQLTransportWS
-open System
 open System.Text.Json
 open Xunit
-open FSharp.Data.GraphQL.Ast
 
 let toClientMessage (theInput : string) =
     let serializerOptions = new JsonSerializerOptions()
     serializerOptions.PropertyNameCaseInsensitive <- true
-    serializerOptions.Converters.Add(new RawMessageConverter())
+    serializerOptions.Converters.Add(new ClientMessageConverter<Root>(TestSchema.executor))
     serializerOptions.Converters.Add(new RawServerMessageConverter())
-    JsonSerializer.Deserialize<RawMessage>(theInput, serializerOptions)
-    |> MessageMapping.toClientMessage serializerOptions TestSchema.executor
+    JsonSerializer.Deserialize<ClientMessage>(theInput, serializerOptions)
 
 let willResultInInvalidMessage expectedExplanation input =
     try
         let result =
             input
             |> toClientMessage
-        match result with
-        | Failure msgs ->
-            match msgs |> List.head with
-            | InvalidMessage (code, explanation) ->
-                Assert.Equal(4400, code)
-                Assert.Equal(expectedExplanation, explanation)
-        | other ->
-            Assert.Fail(sprintf "unexpected actual value: '%A'" other)
+        Assert.Fail(sprintf "should have failed, but succeeded with result: '%A'" result)
     with
     | :? JsonException as ex ->
         Assert.Equal(expectedExplanation, ex.Message)

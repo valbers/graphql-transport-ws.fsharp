@@ -1,9 +1,7 @@
 module SerializationTests
 
-open GraphQLTransportWS.Rop
 open UnitTest
 open GraphQLTransportWS
-open System
 open System.Text.Json
 open Xunit
 open FSharp.Data.GraphQL.Ast
@@ -11,7 +9,7 @@ open FSharp.Data.GraphQL.Ast
 let getStdSerializerOptions () =
     let serializerOptions = new JsonSerializerOptions()
     serializerOptions.PropertyNameCaseInsensitive <- true
-    serializerOptions.Converters.Add(new RawMessageConverter())
+    serializerOptions.Converters.Add(new ClientMessageConverter<Root>(TestSchema.executor))
     serializerOptions.Converters.Add(new RawServerMessageConverter())
     serializerOptions
 
@@ -20,13 +18,10 @@ let ``Deserializes ConnectionInit correctly`` () =
     let serializerOptions = getStdSerializerOptions()
     let input = "{\"type\":\"connection_init\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ConnectionInit None, _) -> () // <-- expected
+    | ConnectionInit None -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -36,13 +31,10 @@ let ``Deserializes ConnectionInit with payload correctly`` () =
 
     let input = "{\"type\":\"connection_init\", \"payload\":\"hello\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ConnectionInit _, _) -> () // <-- expected
+    | ConnectionInit _ -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -52,13 +44,10 @@ let ``Deserializes ClientPing correctly`` () =
 
     let input = "{\"type\":\"ping\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ClientPing None, _) -> () // <-- expected
+    | ClientPing None -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value '%A'" other)
 
@@ -68,13 +57,10 @@ let ``Deserializes ClientPing with payload correctly`` () =
 
     let input = "{\"type\":\"ping\", \"payload\":\"ping!\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ClientPing _, _) -> () // <-- expected
+    | ClientPing _ -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value '%A" other)
 
@@ -84,13 +70,10 @@ let ``Deserializes ClientPong correctly`` () =
 
     let input = "{\"type\":\"pong\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ClientPong None, _) -> () // <-- expected
+    | ClientPong None -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -100,13 +83,10 @@ let ``Deserializes ClientPong with payload correctly`` () =
 
     let input = "{\"type\":\"pong\", \"payload\": \"pong!\"}"
     
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ClientPong _, _) -> () // <-- expected
+    | ClientPong _ -> () // <-- expected
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
 
@@ -116,13 +96,10 @@ let ``Deserializes ClientComplete correctly``() =
 
     let input = "{\"id\": \"65fca2b5-f149-4a70-a055-5123dea4628f\", \"type\":\"complete\"}"
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (ClientComplete id, _) ->
+    | ClientComplete id ->
         Assert.Equal("65fca2b5-f149-4a70-a055-5123dea4628f", id)
     | other ->
         Assert.Fail(sprintf "unexpected actual value: '%A'" other)
@@ -141,13 +118,10 @@ let ``Deserializes client subscription correctly`` () =
            }
         """
 
-    let resultRaw = JsonSerializer.Deserialize<RawMessage>(input, serializerOptions)
-    let result =
-        resultRaw
-        |> MessageMapping.toClientMessage serializerOptions (TestSchema.executor)
+    let result = JsonSerializer.Deserialize<ClientMessage>(input, serializerOptions)
 
     match result with
-    | Success (Subscribe (id, payload), _) ->
+    | Subscribe (id, payload) ->
         Assert.Equal("b5d4d2ff-d262-4882-a7b9-d6aec5e4faa6", id)
         Assert.Equal(1, payload.ExecutionPlan.Operation.SelectionSet.Length)
         let watchMoonSelection = payload.ExecutionPlan.Operation.SelectionSet |> List.head

@@ -13,7 +13,7 @@ type RawSubscribePayload =
 
 type RawMessage =
     { Id : string option
-      Type : string option
+      Type : string
       Payload : JsonDocument option }
 
 type ServerRawPayload =

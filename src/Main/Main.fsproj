@@ -14,7 +14,6 @@
     <Compile Include="Rop/RopAsync.fs" />
     <Compile Include="Exceptions.fs" />
     <Compile Include="Messages.fs" />
-    <Compile Include="MessageMapping.fs" />
     <Compile Include="GraphQLWebsocketMiddlewareOptions.fs" />
     <Compile Include="RawMessageConverter.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />

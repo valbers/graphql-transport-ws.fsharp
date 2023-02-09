@@ -83,11 +83,20 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         return JsonSerializer.Serialize(raw, jsonSerializerOptions)
       }
 
-  let deserializeClientMessage (serializerOptions : JsonSerializerOptions) (executor : Executor<'Root>) (msg: string) =
+  let deserializeClientMessage (serializerOptions : JsonSerializerOptions) (msg: string) =
     task {
-      return
-        JsonSerializer.Deserialize<RawMessage>(msg, serializerOptions)
-        |> MessageMapping.toClientMessage serializerOptions executor
+        try
+          return
+            JsonSerializer.Deserialize<ClientMessage>(msg, serializerOptions)
+            |> succeed
+        with
+        | :? InvalidMessageException as e ->
+          return
+            fail <| InvalidMessage(4400, e.ToString())
+        | :? JsonException as e ->
+          printfn "%s" (e.ToString())
+          return
+            fail <| InvalidMessage(4400, "invalid json in client message")
     }
 
   let isSocketOpen (theSocket : WebSocket) =
@@ -122,14 +131,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       if String.IsNullOrWhiteSpace message then
         return None
       else
-        try
-          let! result =
-            message
-            |> deserializeClientMessage serializerOptions executor
-          return Some result
-        with :? JsonException as e ->
-          printfn "%s" (e.ToString())
-          return Some (MessageMapping.invalidMsg <| "invalid json in client message")
+        let! result =
+          message
+          |> deserializeClientMessage serializerOptions
+        return Some result
     }
 
   let sendMessageViaSocket (jsonSerializerOptions) (socket : WebSocket) (message : ServerMessage) =
@@ -359,7 +364,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     task {
       let jsonOptions = new JsonOptions()
       jsonOptions.SerializerOptions.PropertyNameCaseInsensitive <- true
-      jsonOptions.SerializerOptions.Converters.Add(new RawMessageConverter())
+      jsonOptions.SerializerOptions.Converters.Add(new ClientMessageConverter<'Root>(options.SchemaExecutor))
       jsonOptions.SerializerOptions.Converters.Add(new RawServerMessageConverter())
       let serializerOptions = jsonOptions.SerializerOptions
       if false && not (ctx.Request.Path = PathString (options.EndpointUrl)) then
