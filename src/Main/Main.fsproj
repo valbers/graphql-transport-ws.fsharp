@@ -16,6 +16,7 @@
     <Compile Include="Messages.fs" />
     <Compile Include="GraphQLWebsocketMiddlewareOptions.fs" />
     <Compile Include="RawMessageConverter.fs" />
+    <Compile Include="GraphQLSubscriptionsManagement.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />
   </ItemGroup>
 
