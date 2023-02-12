@@ -3,7 +3,6 @@ namespace GraphQLTransportWS
 module internal GraphQLSubscriptionsManagement =
   let addSubscription (id : SubscriptionId, unsubscriber : SubscriptionUnsubscriber, onUnsubscribe : OnUnsubscribeAction)
                       (subscriptions : SubscriptionsDict) =
-    printfn "GraphQLSubscriptionsManagement: new subscription (id: \"%s\". Total: %d)" (id |> string) subscriptions.Count
     subscriptions.Add(id, (unsubscriber, onUnsubscribe))
 
   let isIdTaken (id : SubscriptionId) (subscriptions : SubscriptionsDict) =

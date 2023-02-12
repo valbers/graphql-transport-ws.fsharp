@@ -12,8 +12,9 @@ open System.Threading.Tasks
 open FSharp.Data.GraphQL.Execution
 open Microsoft.Extensions.Hosting
 open Microsoft.AspNetCore.Http.Json
+open Microsoft.Extensions.Logging
 
-type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
+type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, logger : ILogger<GraphQLWebSocketMiddleware<'Root>>, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
   let serializeServerMessage (jsonSerializerOptions: JsonSerializerOptions) (serverMessage : ServerMessage) =
       task {
@@ -57,7 +58,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
           return
             fail <| InvalidMessage(4400, e.ToString())
         | :? JsonException as e ->
-          printfn "%s" (e.ToString())
+          if logger.IsEnabled(LogLevel.Debug) then
+            logger.LogDebug(e.ToString())
+          else
+            ()
           return
             fail <| InvalidMessage(4400, "invalid json in client message")
     }
@@ -103,7 +107,8 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
   let sendMessageViaSocket (jsonSerializerOptions) (socket : WebSocket) (message : ServerMessage) =
     task {
       if not (socket.State = WebSocketState.Open) then
-        printfn "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State
+        if logger.IsEnabled(LogLevel.Trace) then
+          logger.LogTrace(sprintf "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State)
       else
         let! serializedMessage = message |> serializeServerMessage jsonSerializerOptions
         let segment =
@@ -111,10 +116,13 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             System.Text.Encoding.UTF8.GetBytes(serializedMessage)
           )
         if not (socket.State = WebSocketState.Open) then
-          printfn "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State
+          if logger.IsEnabled(LogLevel.Trace) then
+            logger.LogTrace(sprintf "ignoring message to be sent via socket, since its state is not 'Open', but '%A'" socket.State)
         else
           do! socket.SendAsync(segment, WebSocketMessageType.Text, endOfMessage = true, cancellationToken = new CancellationToken())
-        printfn "<- %A" message
+
+        if logger.IsEnabled(LogLevel.Trace) then
+          logger.LogTrace(sprintf "<- %A" message)
     }
 
   let addClientSubscription (id : SubscriptionId) (jsonSerializerOptions) (socket) (howToSendDataOnNext: SubscriptionId -> Output -> Task<unit>) (streamSource: IObservable<Output>) (subscriptions : SubscriptionsDict)  =
@@ -128,7 +136,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         ),
       onError =
         (fun ex ->
-          printfn "[Error on subscription \"%A\"]: %s" id (ex.ToString())
+          logger.LogError(sprintf "[Error on subscription \"%s\"]: %s" id (ex.ToString()))
         ),
       onCompleted =
         (fun () ->
@@ -214,10 +222,12 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         |> Option.defaultWith (fun () -> "")
 
     let logMsgReceivedWithOptionalPayload optionalPayload msgAsStr =
-        printfn "%s%s" msgAsStr (optionalPayload |> getStrAddendumOfOptionalPayload)
+      if logger.IsEnabled(LogLevel.Trace) then
+        logger.LogTrace (sprintf "%s%s" msgAsStr (optionalPayload |> getStrAddendumOfOptionalPayload))
 
     let logMsgWithIdReceived id msgAsStr =
-        printfn "%s (id: %s)" msgAsStr id
+      if logger.IsEnabled(LogLevel.Trace) then
+        logger.LogTrace(sprintf "%s (id: %s)" msgAsStr id)
 
     // <--------------
     // <-- Helpers --|
@@ -232,7 +242,8 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             let! receivedMessage = safe_Receive()
             match receivedMessage with
             | None ->
-                printfn "Warn: websocket socket received empty message! (socket state = %A)" socket.State
+              if logger.IsEnabled(LogLevel.Trace) then
+                logger.LogTrace(sprintf "Websocket socket received empty message! (socket state = %A)" socket.State)
             | Some msg ->
                 match msg with
                 | Failure failureMsgs ->
@@ -272,16 +283,19 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                 | Success (ClientComplete id, _) ->
                     "ClientComplete" |> logMsgWithIdReceived id
                     subscriptions |> GraphQLSubscriptionsManagement.removeSubscription (id)
-        printfn "Leaving graphql-ws connection loop..."
+        logger.LogTrace "Leaving graphql-ws connection loop..."
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
       with
       | ex ->
-        printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString())
+        logger.LogError (sprintf "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware (handleMessages). More:\n%s" (ex.GetType().Name) (ex.ToString()))
         // at this point, only something really weird must have happened.
         // In order to avoid faulty state scenarios and unimagined damages,
         // just close the socket without further ado.
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
     }
+    // <--------
+    // <-- Main
+    // <--------
 
   let waitForConnectionInitAndRespondToClient (serializerOptions : JsonSerializerOptions) (schemaExecutor : Executor<'Root>) (replacements : Map<string, obj>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
     task {
@@ -295,11 +309,11 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       )
       let! connectionInitSucceeded = Task.Run<bool>((fun _ ->
         task {
-          printfn "Waiting for ConnectionInit..."
+          logger.LogDebug("Waiting for ConnectionInit...")
           let! receivedMessage = receiveMessageViaSocket (new CancellationToken()) serializerOptions schemaExecutor replacements socket
           match receivedMessage with
           | Some (Success (ConnectionInit payload, _)) ->
-            printfn "Valid connection_init received! Responding with ACK!"
+            logger.LogDebug("Valid connection_init received! Responding with ACK!")
             detonationRegistration.Unregister() |> ignore
             do! ConnectionAck |> sendMessageViaSocket serializerOptions socket
             return true
@@ -345,7 +359,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             |> waitForConnectionInitAndRespondToClient serializerOptions options.SchemaExecutor Map.empty options.ConnectionInitTimeoutInMs
           match connectionInitResult with
           | Failure errMsg ->
-            printfn "%A" errMsg
+            logger.LogWarning(sprintf "%A" errMsg)
           | Success _ ->
             let longRunningCancellationToken =
               (CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, applicationLifetime.ApplicationStopping).Token)
@@ -358,10 +372,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             let safe_HandleMessages = handleMessages longRunningCancellationToken
             try
               do! socket
-                  |> safe_HandleMessages serializerOptions options.SchemaExecutor options.RootFactory options.CustomPingHandler
+                |> safe_HandleMessages serializerOptions options.SchemaExecutor options.RootFactory options.CustomPingHandler
             with
               | ex ->
-                printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
+                logger.LogError(sprintf "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString()))
         else
           do! next.Invoke(ctx)
     }
