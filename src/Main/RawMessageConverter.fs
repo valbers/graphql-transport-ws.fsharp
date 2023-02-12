@@ -189,12 +189,12 @@ type RawServerMessageConverter() =
       ()
     | Some serverRawPayload ->
       match serverRawPayload with
-      | ServerStringPayload payload ->
-        writer.WriteString("payload", payload)
       | ExecutionResult output ->
         writer.WritePropertyName("payload")
         JsonSerializer.Serialize(writer, output, options)
       | ErrorMessages msgs ->
         JsonSerializer.Serialize(writer, msgs, options)
+      | CustomResponse jsonDocument ->
+        jsonDocument.WriteTo(writer)
 
     writer.WriteEndObject()

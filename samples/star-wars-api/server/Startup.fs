@@ -8,6 +8,7 @@ open Microsoft.Extensions.Logging
 open System
 open Microsoft.AspNetCore.Server.Kestrel.Core
 open Microsoft.Extensions.Hosting
+open System.Text.Json
 
 type Startup private () =
     let graphqlEndpointUrl = "/graphql"
@@ -30,6 +31,17 @@ type Startup private () =
                 RootFactory = fun () -> { RequestId = Guid.NewGuid().ToString() }
                 EndpointUrl = graphqlEndpointUrl
                 ConnectionInitTimeoutInMs = 3000
+                CustomPingHandler =
+                    Some (fun _ payload -> task {
+                            printfn "custom ping handling..."
+                            return
+                                Some <|
+                                JsonSerializer.SerializeToDocument(
+                                    {| MyRandomCustomMessage = "asdf"
+                                       OriginalMessage = payload
+                                    |}
+                                )
+                         })
              }
         )
         |> ignore

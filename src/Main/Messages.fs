@@ -23,9 +23,9 @@ type RawMessage =
       Payload : JsonDocument option }
 
 type ServerRawPayload =
-    | ServerStringPayload of string
     | ExecutionResult of Output
     | ErrorMessages of NameValueLookup list
+    | CustomResponse of JsonDocument
 
 type RawServerMessage =
     { Id : string option
@@ -49,7 +49,7 @@ type ClientMessageProtocolFailure =
 type ServerMessage =
     | ConnectionAck
     | ServerPing
-    | ServerPong
+    | ServerPong of JsonDocument option
     | Next of id : string * payload : Output
     | Error of id : string * err : NameValueLookup list
     | Complete of id : string

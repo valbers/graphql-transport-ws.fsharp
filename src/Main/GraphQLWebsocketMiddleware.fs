@@ -13,7 +13,7 @@ open FSharp.Data.GraphQL.Execution
 open Microsoft.Extensions.Hosting
 open Microsoft.AspNetCore.Http.Json
 
-type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
+type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
 
   let serializeServerMessage (jsonSerializerOptions: JsonSerializerOptions) (serverMessage : ServerMessage) =
       task {
@@ -27,10 +27,10 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             { Id = None
               Type = "ping"
               Payload = None }
-          | ServerPong ->
+          | ServerPong p ->
             { Id = None
               Type = "pong"
-              Payload = None }
+              Payload = p |> Option.map CustomResponse }
           | Next (id, payload) ->
             { Id = Some id
               Type = "next"
@@ -158,7 +158,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
   let tryToGracefullyCloseSocketWithDefaultBehavior =
     tryToGracefullyCloseSocket (WebSocketCloseStatus.NormalClosure, "Normal Closure")
 
-  let handleMessages (cancellationToken: CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (socket : WebSocket) =
+  let handleMessages (cancellationToken: CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (root: unit -> 'Root) (pingHandler : PingHandler option) (socket : WebSocket) =
     let subscriptions = new Dictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>()
     // ---------->
     // Helpers -->
@@ -248,7 +248,12 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
                       new CancellationToken())
                 | Success (ClientPing p, _) ->
                     "ClientPing" |> logMsgReceivedWithOptionalPayload p
-                    do! ServerPong |> safe_Send
+                    match pingHandler with
+                    | Some func ->
+                      let! customP = p |> func serviceProvider
+                      do! ServerPong customP |> safe_Send
+                    | None ->
+                      do! ServerPong p |> safe_Send
                 | Success (ClientPong p, _) ->
                     "ClientPong" |> logMsgReceivedWithOptionalPayload p
                 | Success (Subscribe (id, query), _) ->
@@ -353,7 +358,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             let safe_HandleMessages = handleMessages longRunningCancellationToken
             try
               do! socket
-                  |> safe_HandleMessages serializerOptions options.SchemaExecutor options.RootFactory
+                  |> safe_HandleMessages serializerOptions options.SchemaExecutor options.RootFactory options.CustomPingHandler
             with
               | ex ->
                 printfn "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString())
