@@ -2,8 +2,14 @@ namespace GraphQLTransportWS
 
 open FSharp.Data.GraphQL.Execution
 open FSharp.Data.GraphQL.Types
+open System
 open System.Text.Json
 open System.Collections.Generic
+
+type SubscriptionId = string
+type SubscriptionUnsubscriber = IDisposable
+type OnUnsubscribeAction = SubscriptionId -> unit
+type SubscriptionsDict = IDictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>
 
 type RawSubscribePayload =
     { OperationName : string option
