@@ -75,7 +75,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     not (theSocket.State = WebSocketState.Aborted) &&
     not (theSocket.State = WebSocketState.Closed)
 
-  let receiveMessageViaSocket (cancellationToken : CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (replacements : Map<string, obj>) (socket : WebSocket) : Task<RopResult<ClientMessage, ClientMessageProtocolFailure> option> =
+  let receiveMessageViaSocket (cancellationToken : CancellationToken) (serializerOptions: JsonSerializerOptions) (executor : Executor<'Root>) (socket : WebSocket) : Task<RopResult<ClientMessage, ClientMessageProtocolFailure> option> =
     task {
       let buffer = Array.zeroCreate 4096
       let completeMessage = new List<byte>()
@@ -176,7 +176,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     let safe_Send = sendMessageViaSocket serializerOptions socket
     let safe_Receive() =
       socket
-      |> safe_ReceiveMessageViaSocket serializerOptions executor Map.empty
+      |> safe_ReceiveMessageViaSocket serializerOptions executor
 
     let safe_SendQueryOutput id output =
       let outputAsDict = output :> IDictionary<string, obj>
@@ -293,11 +293,11 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         // just close the socket without further ado.
         do! socket |> tryToGracefullyCloseSocketWithDefaultBehavior
     }
+
     // <--------
     // <-- Main
     // <--------
-
-  let waitForConnectionInitAndRespondToClient (serializerOptions : JsonSerializerOptions) (schemaExecutor : Executor<'Root>) (replacements : Map<string, obj>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
+  let waitForConnectionInitAndRespondToClient (serializerOptions : JsonSerializerOptions) (schemaExecutor : Executor<'Root>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
     task {
       let timerTokenSource = new CancellationTokenSource()
       timerTokenSource.CancelAfter(connectionInitTimeoutInMs)
@@ -310,7 +310,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
       let! connectionInitSucceeded = Task.Run<bool>((fun _ ->
         task {
           logger.LogDebug("Waiting for ConnectionInit...")
-          let! receivedMessage = receiveMessageViaSocket (new CancellationToken()) serializerOptions schemaExecutor replacements socket
+          let! receivedMessage = receiveMessageViaSocket (new CancellationToken()) serializerOptions schemaExecutor socket
           match receivedMessage with
           | Some (Success (ConnectionInit payload, _)) ->
             logger.LogDebug("Valid connection_init received! Responding with ACK!")
@@ -356,7 +356,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
           let! connectionInitResult =
             socket
-            |> waitForConnectionInitAndRespondToClient serializerOptions options.SchemaExecutor Map.empty options.ConnectionInitTimeoutInMs
+            |> waitForConnectionInitAndRespondToClient serializerOptions options.SchemaExecutor options.ConnectionInitTimeoutInMs
           match connectionInitResult with
           | Failure errMsg ->
             logger.LogWarning(sprintf "%A" errMsg)
