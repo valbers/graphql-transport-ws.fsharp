@@ -51,7 +51,7 @@ module HttpHandlers =
             if cancellationToken.IsCancellationRequested then
                 return (fun _ -> None) ctx
             else
-                let options = (ctx.GetService<GraphQLTransportWS.GraphQLWebsocketMiddlewareOptions<'Root>>())
+                let options = (ctx.GetService<GraphQLTransportWS.GraphQLTransportWSOptions<'Root>>())
                 let serializerOptions = options.SerializerOptions
                 let! graphqlRequest =
                     JsonSerializer.DeserializeAsync<GraphQLTransportWS.GraphQLRequest>(

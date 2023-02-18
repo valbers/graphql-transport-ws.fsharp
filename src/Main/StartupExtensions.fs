@@ -20,7 +20,7 @@ type ServiceCollectionExtensions() =
 
   [<Extension>]
   static member AddGraphQLTransportWS<'Root>(this : IServiceCollection, executor : Executor<'Root>, rootFactory : unit -> 'Root, endpointUrl : string) =
-    this.AddSingleton<GraphQLWebsocketMiddlewareOptions<'Root>>(createStandardOptions executor rootFactory endpointUrl)
+    this.AddSingleton<GraphQLTransportWSOptions<'Root>>(createStandardOptions executor rootFactory endpointUrl)
 
   [<Extension>]
   static member AddGraphQLTransportWSWith<'Root>
@@ -28,6 +28,6 @@ type ServiceCollectionExtensions() =
       executor : Executor<'Root>,
       rootFactory : unit -> 'Root,
       endpointUrl : string,
-      extraConfiguration : GraphQLWebsocketMiddlewareOptions<'Root> -> GraphQLWebsocketMiddlewareOptions<'Root>
+      extraConfiguration : GraphQLTransportWSOptions<'Root> -> GraphQLTransportWSOptions<'Root>
     ) =
-    this.AddSingleton<GraphQLWebsocketMiddlewareOptions<'Root>>(createStandardOptions executor rootFactory endpointUrl |> extraConfiguration)
+    this.AddSingleton<GraphQLTransportWSOptions<'Root>>(createStandardOptions executor rootFactory endpointUrl |> extraConfiguration)

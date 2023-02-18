@@ -13,7 +13,7 @@ open FSharp.Data.GraphQL.Execution
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 
-type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, logger : ILogger<GraphQLWebSocketMiddleware<'Root>>, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
+type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, logger : ILogger<GraphQLWebSocketMiddleware<'Root>>, options : GraphQLTransportWSOptions<'Root>) =
 
   let serializeServerMessage (jsonSerializerOptions: JsonSerializerOptions) (serverMessage : ServerMessage) =
       task {

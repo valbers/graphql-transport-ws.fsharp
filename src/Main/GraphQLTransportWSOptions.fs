@@ -7,7 +7,7 @@ open System.Threading.Tasks
 type PingHandler =
   IServiceProvider -> JsonDocument option -> Task<JsonDocument option>
 
-type GraphQLWebsocketMiddlewareOptions<'Root> =
+type GraphQLTransportWSOptions<'Root> =
  { SchemaExecutor: Executor<'Root>
    RootFactory: unit -> 'Root
    EndpointUrl: string
