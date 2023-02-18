@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="FSharp.Data.GraphQL.Server" Version="1.0.7" />
-    <PackageReference Include="Giraffe" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
