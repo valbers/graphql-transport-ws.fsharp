@@ -6,6 +6,62 @@ open System
 open System.Text.Json
 open System.Text.Json.Serialization
 
+module GraphQLQueryDecoding =
+  let private resolveVariables (serializerOptions : JsonSerializerOptions) (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
+    try
+      try
+        if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
+          let offendingValueKind = variableValuesObj.RootElement.ValueKind
+          fail (sprintf "\"variables\" must be an object, but here it is \"%A\" instead" offendingValueKind)
+        else
+          let providedVariableValues = variableValuesObj.RootElement.EnumerateObject() |> List.ofSeq
+          expectedVariables
+          |> List.choose
+              (fun expectedVariable ->
+                providedVariableValues
+                |> List.tryFind(fun x -> x.Name = expectedVariable.Name)
+                |> Option.map
+                  (fun providedValue ->
+                    let boxedValue =
+                      if providedValue.Value.ValueKind.Equals(JsonValueKind.Null) then
+                        null :> obj
+                      elif providedValue.Value.ValueKind.Equals(JsonValueKind.String) then
+                        providedValue.Value.GetString() :> obj
+                      else
+                        JsonSerializer.Deserialize(providedValue.Value, serializerOptions) :> obj
+                    (expectedVariable.Name, boxedValue)
+                  )
+              )
+          |> Map.ofList
+          |> succeed
+      with
+        | :? JsonException as ex ->
+          fail (sprintf "%s" (ex.Message))
+        | ex ->
+          printfn "%s" (ex.ToString())
+          fail "Something unexpected happened during the parsing of this request."
+    finally
+      variableValuesObj.Dispose()
+
+  let decodeGraphQLQuery (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
+    let executionPlan =
+      match operationName with
+      | Some operationName ->
+        executor.CreateExecutionPlan(query, operationName = operationName)
+      | None ->
+        executor.CreateExecutionPlan(query)
+    let variablesResult =
+      match variables with
+      | None -> succeed <| Map.empty // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
+      | Some variableValuesObj ->
+        variableValuesObj
+        |> resolveVariables serializerOptions executionPlan.Variables
+
+    variablesResult
+    |> mapR (fun variables ->
+              { ExecutionPlan = executionPlan
+                Variables = variables })
+
 [<Sealed>]
 type ClientMessageConverter<'Root>(executor : Executor<'Root>) =
   inherit JsonConverter<ClientMessage>()
@@ -43,60 +99,12 @@ type ClientMessageConverter<'Root>(executor : Executor<'Root>) =
     | Some s -> succeed s
     | None -> invalidMsg <| "property \"id\" is required for this message but was not present."
 
-  let resolveVariables (serializerOptions : JsonSerializerOptions) (expectedVariables : Types.VarDef list) (variableValuesObj : JsonDocument) =
-    try
-      if (not (variableValuesObj.RootElement.ValueKind.Equals(JsonValueKind.Object))) then
-        let offendingValueKind = variableValuesObj.RootElement.ValueKind
-        fail (sprintf "\"variables\" must be an object, but here it is \"%A\" instead" offendingValueKind)
-      else
-        let providedVariableValues = variableValuesObj.RootElement.EnumerateObject() |> List.ofSeq
-        expectedVariables
-        |> List.choose
-            (fun expectedVariable ->
-              providedVariableValues
-              |> List.tryFind(fun x -> x.Name = expectedVariable.Name)
-              |> Option.map
-                (fun providedValue ->
-                  let boxedValue =
-                    if providedValue.Value.ValueKind.Equals(JsonValueKind.Null) then
-                      null :> obj
-                    elif providedValue.Value.ValueKind.Equals(JsonValueKind.String) then
-                      providedValue.Value.GetString() :> obj
-                    else
-                      JsonSerializer.Deserialize(providedValue.Value, serializerOptions) :> obj
-                  (expectedVariable.Name, boxedValue)
-                )
-            )
-        |> succeed
-    finally
-      variableValuesObj.Dispose()
-
-  let decodeGraphQLQuery (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
-    let executionPlan =
-      match operationName with
-      | Some operationName ->
-        executor.CreateExecutionPlan(query, operationName = operationName)
-      | None ->
-        executor.CreateExecutionPlan(query)
-    let variablesResult : RopResult<Map<string, obj>, ClientMessageProtocolFailure> =
-      match variables with
-      | None -> succeed <| Map.empty // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
-      | Some variableValuesObj ->
-        variableValuesObj
-        |> resolveVariables serializerOptions executionPlan.Variables
-        |> mapMessagesR (fun errMsg -> InvalidMessage (CustomWebSocketStatus.invalidMessage, errMsg))
-        |> mapR Map.ofList
-    variablesResult
-    |> mapR (fun variables ->
-              { ExecutionPlan = executionPlan
-                Variables = variables })
-
   let requireSubscribePayload (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (payload : JsonDocument option) : RopResult<GraphQLQuery, ClientMessageProtocolFailure> =
     match payload with
     | None ->
       invalidMsg <| "payload is required for this message, but none was present."
     | Some p ->
-      let rawSubsPayload = JsonSerializer.Deserialize<RawSubscribePayload option>(p, serializerOptions)
+      let rawSubsPayload = JsonSerializer.Deserialize<GraphQLRequest option>(p, serializerOptions)
       match rawSubsPayload with
       | None ->
         invalidMsg <| "payload is required for this message, but none was present."
@@ -106,7 +114,8 @@ type ClientMessageConverter<'Root>(executor : Executor<'Root>) =
           invalidMsg <| sprintf "there was no query in the client's subscribe message!"
         | Some query ->
           query
-          |> decodeGraphQLQuery serializerOptions executor subscribePayload.OperationName subscribePayload.Variables
+          |> GraphQLQueryDecoding.decodeGraphQLQuery serializerOptions executor subscribePayload.OperationName subscribePayload.Variables
+          |> mapMessagesR (fun errMsg -> InvalidMessage (CustomWebSocketStatus.invalidMessage, errMsg))
 
 
   let readRawMessage (reader : byref<Utf8JsonReader>, options: JsonSerializerOptions) : RawMessage =
@@ -198,3 +207,11 @@ type RawServerMessageConverter() =
         jsonDocument.WriteTo(writer)
 
     writer.WriteEndObject()
+
+
+module JsonConverterUtils =
+  let configureSerializer (executor : Executor<'Root>) (jsonSerializerOptions : JsonSerializerOptions) =
+    jsonSerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
+    jsonSerializerOptions.Converters.Add(new ClientMessageConverter<'Root>(executor))
+    jsonSerializerOptions.Converters.Add(new RawServerMessageConverter())
+    jsonSerializerOptions

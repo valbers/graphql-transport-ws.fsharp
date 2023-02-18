@@ -11,7 +11,6 @@ open System.Threading
 open System.Threading.Tasks
 open FSharp.Data.GraphQL.Execution
 open Microsoft.Extensions.Hosting
-open Microsoft.AspNetCore.Http.Json
 open Microsoft.Extensions.Logging
 
 type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifetime : IHostApplicationLifetime, serviceProvider : IServiceProvider, logger : ILogger<GraphQLWebSocketMiddleware<'Root>>, options : GraphQLWebsocketMiddlewareOptions<'Root>) =
@@ -297,6 +296,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
     // <--------
     // <-- Main
     // <--------
+
   let waitForConnectionInitAndRespondToClient (serializerOptions : JsonSerializerOptions) (schemaExecutor : Executor<'Root>) (connectionInitTimeoutInMs : int) (socket : WebSocket) : Task<RopResult<unit, string>> =
     task {
       let timerTokenSource = new CancellationTokenSource()
@@ -344,11 +344,6 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
 
   member __.InvokeAsync(ctx : HttpContext) =
     task {
-      let jsonOptions = new JsonOptions()
-      jsonOptions.SerializerOptions.PropertyNameCaseInsensitive <- true
-      jsonOptions.SerializerOptions.Converters.Add(new ClientMessageConverter<'Root>(options.SchemaExecutor))
-      jsonOptions.SerializerOptions.Converters.Add(new RawServerMessageConverter())
-      let serializerOptions = jsonOptions.SerializerOptions
       if false && not (ctx.Request.Path = PathString (options.EndpointUrl)) then
         do! next.Invoke(ctx)
       else
@@ -356,7 +351,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
           use! socket = ctx.WebSockets.AcceptWebSocketAsync("graphql-transport-ws")
           let! connectionInitResult =
             socket
-            |> waitForConnectionInitAndRespondToClient serializerOptions options.SchemaExecutor options.ConnectionInitTimeoutInMs
+            |> waitForConnectionInitAndRespondToClient options.SerializerOptions options.SchemaExecutor options.ConnectionInitTimeoutInMs
           match connectionInitResult with
           | Failure errMsg ->
             logger.LogWarning(sprintf "%A" errMsg)
@@ -372,7 +367,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
             let safe_HandleMessages = handleMessages longRunningCancellationToken
             try
               do! socket
-                |> safe_HandleMessages serializerOptions options.SchemaExecutor options.RootFactory options.CustomPingHandler
+                |> safe_HandleMessages options.SerializerOptions options.SchemaExecutor options.RootFactory options.CustomPingHandler
             with
               | ex ->
                 logger.LogError(sprintf "Unexpected exception \"%s\" in GraphQLWebsocketMiddleware. More:\n%s" (ex.GetType().Name) (ex.ToString()))

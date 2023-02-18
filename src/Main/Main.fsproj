@@ -18,6 +18,7 @@
     <Compile Include="RawMessageConverter.fs" />
     <Compile Include="GraphQLSubscriptionsManagement.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />
+    <Compile Include="StartupExtensions.fs" />
   </ItemGroup>
 
   <ItemGroup>

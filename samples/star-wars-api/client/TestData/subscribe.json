@@ -1,0 +1,7 @@
+{
+  "type": "subscribe",
+  "id": "1",
+  "payload": {
+    "query": "subscription { watchMoon(id: \"1\") { id name isMoon } }"
+  }
+}

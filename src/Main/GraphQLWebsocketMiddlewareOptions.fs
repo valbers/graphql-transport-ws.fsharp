@@ -11,6 +11,7 @@ type GraphQLWebsocketMiddlewareOptions<'Root> =
  { SchemaExecutor: Executor<'Root>
    RootFactory: unit -> 'Root
    EndpointUrl: string
+   SerializerOptions : JsonSerializerOptions
    ConnectionInitTimeoutInMs: int
    CustomPingHandler : PingHandler option
  }
