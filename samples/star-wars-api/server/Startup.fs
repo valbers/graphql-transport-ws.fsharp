@@ -31,8 +31,6 @@ type Startup private () =
                 .Configure(Action<IISServerOptions>(fun x -> x.AllowSynchronousIO <- true))
         |> ignore
 
-        services.AddSingleton(Schema.executor) |> ignore
-
         services.AddGraphQLTransportWS<Root>(
             executor = Schema.executor,
             rootFactory = rootFactory,
