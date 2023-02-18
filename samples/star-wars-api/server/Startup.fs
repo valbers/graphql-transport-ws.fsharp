@@ -12,7 +12,7 @@ open GraphQLTransportWS
 open GraphQLTransportWS.Giraffe
 
 type Startup private () =
-    let graphqlEndpointUrl = "/graphql"
+    let graphqlEndpointUrl = "/ws"
 
     let setCorsHeaders : HttpHandler =
         setHttpHeader "Access-Control-Allow-Origin" "*"
@@ -44,7 +44,6 @@ type Startup private () =
             log.LogError(EventId(), ex, "An unhandled exception has occurred while executing the request.")
             clearResponse >=> setStatusCode 500
         app
-            .UsePathBase(graphqlEndpointUrl)
             .UseGiraffeErrorHandler(errorHandler)
             .UseWebSockets()
             .UseMiddleware<GraphQLWebSocketMiddleware<Root>>()

@@ -344,7 +344,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
 
   member __.InvokeAsync(ctx : HttpContext) =
     task {
-      if false && not (ctx.Request.Path = PathString (options.EndpointUrl)) then
+      if not (ctx.Request.Path = PathString (options.EndpointUrl)) then
         do! next.Invoke(ctx)
       else
         if ctx.WebSockets.IsWebSocketRequest then
