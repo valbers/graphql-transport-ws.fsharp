@@ -9,6 +9,7 @@ open System
 open Microsoft.AspNetCore.Server.Kestrel.Core
 open Microsoft.Extensions.Hosting
 open GraphQLTransportWS
+open GraphQLTransportWS.Giraffe
 
 type Startup private () =
     let graphqlEndpointUrl = "/graphql"
@@ -16,6 +17,9 @@ type Startup private () =
     let setCorsHeaders : HttpHandler =
         setHttpHeader "Access-Control-Allow-Origin" "*"
         >=> setHttpHeader "Access-Control-Allow-Headers" "content-type"
+
+    let rootFactory () =
+        { RequestId = Guid.NewGuid().ToString() }
 
     new (configuration: IConfiguration) as this =
         Startup() then
@@ -31,7 +35,7 @@ type Startup private () =
 
         services.AddGraphQLTransportWS<Root>(
             executor = Schema.executor,
-            rootFactory = (fun () -> { RequestId = Guid.NewGuid().ToString() }),
+            rootFactory = rootFactory,
             endpointUrl = graphqlEndpointUrl)
         |> ignore
 
@@ -50,6 +54,7 @@ type Startup private () =
                             applicationLifetime.ApplicationStopping
                             (loggerFactory.CreateLogger("HttpHandlers.handlerGraphQL"))
                             Schema.executor
+                            rootFactory
                 )
 
     member val Configuration : IConfiguration = null with get, set

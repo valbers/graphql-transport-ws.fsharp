@@ -8,18 +8,18 @@
 
   <ItemGroup>
     <Compile Include="Schema.fs" />
-    <Compile Include="HttpHandlers.fs" />
     <Compile Include="Startup.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="FSharp.Data.GraphQL.Server" Version="1.0.7" />
-    <PackageReference Include="Giraffe" />
+    <PackageReference Include="Giraffe" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Main\Main.fsproj" />
+    <ProjectReference Include="..\..\..\src\Giraffe\Giraffe.fsproj" />
   </ItemGroup>
 
 </Project>
