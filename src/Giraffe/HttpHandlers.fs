@@ -1,18 +1,29 @@
 ﻿namespace GraphQLTransportWS.Giraffe
 
-open Giraffe
-open Microsoft.AspNetCore.Http
 open FSharp.Data.GraphQL.Execution
 open FSharp.Data.GraphQL
-open FSharp.Data.GraphQL.Types
+open Giraffe
+open GraphQLTransportWS
+open GraphQLTransportWS.Rop
+open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.Logging
+open System.Collections.Generic
 open System.Text.Json
 open System.Threading
+open System.Threading.Tasks
 
 type HttpHandler = HttpFunc -> HttpContext -> HttpFuncResult
 
 module HttpHandlers =
-    open Microsoft.Extensions.Logging
-    open GraphQLTransportWS
+
+    let private getRequiredService<'Service> (ctx : HttpContext) : 'Service =
+        let service = (ctx.GetService<'Service>())
+        if obj.ReferenceEquals(service, null)
+        then
+            let theType = typedefof<'Service>
+            failwithf "required service \"%s\" was not registered at the dependency injection container!" (theType.FullName)
+        service
+
     let private httpOk (cancellationToken : CancellationToken) (serializerOptions : JsonSerializerOptions) payload : HttpHandler =
         setStatusCode 200
         >=> (setHttpHeader "Content-Type" "application/json")
@@ -40,71 +51,106 @@ module HttpHandlers =
             ]
         )
 
-    let handleGraphQL
+    let private addToErrorsInData (theseNew: Error list) (data : IDictionary<string, obj>) =
+        let toNameValueLookupList (errors : Error list) =
+            errors
+            |> List.map
+                (fun (errMsg, path) ->
+                    NameValueLookup.ofList ["message", upcast errMsg; "path", upcast path]
+                )
+        let result =
+            data
+            |> Seq.map(fun x -> (x.Key, x.Value))
+            |> Map.ofSeq
+        match data.TryGetValue("errors") with
+        | (true, (:? list<NameValueLookup> as nameValueLookups)) ->
+            result
+            |> Map.change
+                "errors"
+                (fun _ -> Some <| upcast (nameValueLookups @ (theseNew |> toNameValueLookupList)))
+        | (true, _) ->
+            result
+        | (false, _) ->
+            result
+            |> Map.add
+                "errors"
+                (upcast (theseNew |> toNameValueLookupList))
+
+    let handleGraphQL<'Root>
         (cancellationToken : CancellationToken)
         (logger : ILogger)
-        (executor : Executor<'Root>)
-        (rootFactory : unit -> 'Root)
         (next : HttpFunc) (ctx : HttpContext) =
         task {
             let cancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, ctx.RequestAborted).Token
             if cancellationToken.IsCancellationRequested then
                 return (fun _ -> None) ctx
             else
-                let options = (ctx.GetService<GraphQLTransportWS.GraphQLTransportWSOptions<'Root>>())
+                let options = ctx |> getRequiredService<GraphQLTransportWSOptions<'Root>>
+                let executor = options.SchemaExecutor
+                let rootFactory = options.RootFactory
                 let serializerOptions = options.SerializerOptions
-                let! graphqlRequest =
-                    JsonSerializer.DeserializeAsync<GraphQLTransportWS.GraphQLRequest>(
-                        ctx.Request.Body,
-                        serializerOptions
-                    ).AsTask()
+                let! graphqlRequestDeserializationResult =
+                    try
+                        JsonSerializer.DeserializeAsync<GraphQLRequest>(
+                            ctx.Request.Body,
+                            serializerOptions
+                        ).AsTask()
+                         .ContinueWith<RopResult<GraphQLRequest, string>>(fun (x : Task<GraphQLRequest>) -> succeed x.Result)
+                    with
+                    | :? GraphQLException as ex ->
+                        Task.FromResult(fail (sprintf "%s" (ex.Message)))
 
                 let applyPlanExecutionResult (result : GQLResponse) =
                     task {
                         match result with
-                        | Direct (data, _) ->
-                            return! httpOk cancellationToken serializerOptions data next ctx
+                        | Direct (data : IDictionary<string, obj>, errs) ->
+                            let finalData = data |> addToErrorsInData errs
+                            return! httpOk cancellationToken serializerOptions finalData next ctx
                         | other ->
                             let error =
                                 prepareGenericErrors ["subscriptions are not supported here (use the websocket endpoint instead)."]
                             return! httpOk cancellationToken serializerOptions error next ctx
                     }
 
-                match graphqlRequest.Query with
-                | None ->
-                    let! result = executor.AsyncExecute (Introspection.IntrospectionQuery) |> Async.StartAsTask
-                    if logger.IsEnabled(LogLevel.Debug) then
-                        logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
-                    else
-                        ()
-                    return! result |> applyPlanExecutionResult
-                | Some queryAsStr ->
-                    let graphQLQueryDecodingResult =
-                        queryAsStr
-                        |> GraphQLQueryDecoding.decodeGraphQLQuery
-                            serializerOptions
-                            executor
-                            graphqlRequest.OperationName
-                            graphqlRequest.Variables
-                    match graphQLQueryDecodingResult with
-                    | Rop.Failure errMsgs ->
-                        return!
-                            httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
-                    | Rop.Success (query, _) ->
-                        if logger.IsEnabled(LogLevel.Debug) then
-                            logger.LogDebug(sprintf "Received query: %A" query)
-                        else
-                            ()
-                        let root = rootFactory()
-                        let! result =
-                            executor.AsyncExecute(
-                                query.ExecutionPlan,
-                                data = root,
-                                variables = query.Variables
-                            )|> Async.StartAsTask
+                match graphqlRequestDeserializationResult with
+                | Failure errMsgs ->
+                    return! httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
+                | Success (graphqlRequest, _) ->
+                    match graphqlRequest.Query with
+                    | None ->
+                        let! result = executor.AsyncExecute (Introspection.IntrospectionQuery) |> Async.StartAsTask
                         if logger.IsEnabled(LogLevel.Debug) then
                             logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
                         else
                             ()
                         return! result |> applyPlanExecutionResult
+                    | Some queryAsStr ->
+                        let graphQLQueryDecodingResult =
+                            queryAsStr
+                            |> GraphQLQueryDecoding.decodeGraphQLQuery
+                                serializerOptions
+                                executor
+                                graphqlRequest.OperationName
+                                graphqlRequest.Variables
+                        match graphQLQueryDecodingResult with
+                        | Failure errMsgs ->
+                            return!
+                                httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
+                        | Success (query, _) ->
+                            if logger.IsEnabled(LogLevel.Debug) then
+                                logger.LogDebug(sprintf "Received query: %A" query)
+                            else
+                                ()
+                            let root = rootFactory()
+                            let! result =
+                                executor.AsyncExecute(
+                                    query.ExecutionPlan,
+                                    data = root,
+                                    variables = query.Variables
+                                )|> Async.StartAsTask
+                            if logger.IsEnabled(LogLevel.Debug) then
+                                logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
+                            else
+                                ()
+                            return! result |> applyPlanExecutionResult
         }

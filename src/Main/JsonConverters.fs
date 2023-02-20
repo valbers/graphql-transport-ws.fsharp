@@ -37,6 +37,8 @@ module GraphQLQueryDecoding =
       with
         | :? JsonException as ex ->
           fail (sprintf "%s" (ex.Message))
+        | :? GraphQLException as ex ->
+          fail (sprintf "%s" (ex.Message))
         | ex ->
           printfn "%s" (ex.ToString())
           fail "Something unexpected happened during the parsing of this request."
@@ -44,21 +46,32 @@ module GraphQLQueryDecoding =
       variableValuesObj.Dispose()
 
   let decodeGraphQLQuery (serializerOptions : JsonSerializerOptions) (executor : Executor<'a>) (operationName : string option) (variables : JsonDocument option) (query : string) =
-    let executionPlan =
-      match operationName with
-      | Some operationName ->
-        executor.CreateExecutionPlan(query, operationName = operationName)
-      | None ->
-        executor.CreateExecutionPlan(query)
-    let variablesResult =
-      match variables with
-      | None -> succeed <| Map.empty // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
-      | Some variableValuesObj ->
-        variableValuesObj
-        |> resolveVariables serializerOptions executionPlan.Variables
+    let executionPlanResult =
+      try
+        match operationName with
+        | Some operationName ->
+          executor.CreateExecutionPlan(query, operationName = operationName)
+          |> succeed
+        | None ->
+          executor.CreateExecutionPlan(query)
+          |> succeed
+      with
+        | :? JsonException as ex ->
+          fail (sprintf "%s" (ex.Message))
+        | :? GraphQLException as ex ->
+          fail (sprintf "%s" (ex.Message))
 
-    variablesResult
-    |> mapR (fun variables ->
+    executionPlanResult
+    |> bindR
+      (fun executionPlan ->
+          match variables with
+          | None -> succeed <| (executionPlan, Map.empty) // it's none of our business here if some variables are expected. If that's the case, execution of the ExecutionPlan will take care of that later (and issue an error).
+          | Some variableValuesObj ->
+            variableValuesObj
+            |> resolveVariables serializerOptions executionPlan.Variables
+            |> mapR (fun variableValsObj -> (executionPlan, variableValsObj))
+      )
+    |> mapR (fun (executionPlan, variables) ->
               { ExecutionPlan = executionPlan
                 Variables = variables })
 
