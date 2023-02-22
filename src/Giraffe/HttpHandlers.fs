@@ -67,7 +67,7 @@ module HttpHandlers =
             result
             |> Map.change
                 "errors"
-                (fun _ -> Some <| upcast (nameValueLookups @ (theseNew |> toNameValueLookupList)))
+                (fun _ -> Some <| upcast (nameValueLookups @ (theseNew |> toNameValueLookupList) |> List.distinct))
         | (true, _) ->
             result
         | (false, _) ->
