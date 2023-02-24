@@ -11,7 +11,7 @@ type SubscriptionUnsubscriber = IDisposable
 type OnUnsubscribeAction = SubscriptionId -> unit
 type SubscriptionsDict = IDictionary<SubscriptionId, SubscriptionUnsubscriber * OnUnsubscribeAction>
 
-type RawSubscribePayload =
+type GraphQLRequest =
     { OperationName : string option
       Query : string option
       Variables : JsonDocument option

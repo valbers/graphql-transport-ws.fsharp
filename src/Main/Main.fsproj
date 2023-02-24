@@ -14,10 +14,11 @@
     <Compile Include="Rop/RopAsync.fs" />
     <Compile Include="Exceptions.fs" />
     <Compile Include="Messages.fs" />
-    <Compile Include="GraphQLWebsocketMiddlewareOptions.fs" />
-    <Compile Include="RawMessageConverter.fs" />
+    <Compile Include="GraphQLTransportWSOptions.fs" />
+    <Compile Include="JsonConverters.fs" />
     <Compile Include="GraphQLSubscriptionsManagement.fs" />
     <Compile Include="GraphQLWebsocketMiddleware.fs" />
+    <Compile Include="StartupExtensions.fs" />
   </ItemGroup>
 
   <ItemGroup>

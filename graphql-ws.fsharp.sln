@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{E2ECB101
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Main.UnitTests", "tests\unit-tests\Main.UnitTests.fsproj", "{85297F41-0524-400A-89EC-E4360CB033D9}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Giraffe", "src\Giraffe\Giraffe.fsproj", "{DE1B7967-79FB-4BE6-8C68-E6118863BB75}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{85297F41-0524-400A-89EC-E4360CB033D9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{85297F41-0524-400A-89EC-E4360CB033D9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{85297F41-0524-400A-89EC-E4360CB033D9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DE1B7967-79FB-4BE6-8C68-E6118863BB75}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DE1B7967-79FB-4BE6-8C68-E6118863BB75}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DE1B7967-79FB-4BE6-8C68-E6118863BB75}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DE1B7967-79FB-4BE6-8C68-E6118863BB75}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{72471B86-58DF-42DC-8220-4E9E658AE781} = {2BBAEFA0-4E9F-467B-ABEA-A9854E821495}
 		{85297F41-0524-400A-89EC-E4360CB033D9} = {E2ECB101-4BA2-4884-9AE2-012BF8F8F433}
+		{DE1B7967-79FB-4BE6-8C68-E6118863BB75} = {2BBAEFA0-4E9F-467B-ABEA-A9854E821495}
 	EndGlobalSection
 EndGlobal
