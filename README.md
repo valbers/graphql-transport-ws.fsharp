@@ -13,6 +13,8 @@ In a `Startup` class...
 namespace MyApp
 
 open Giraffe
+open GraphQLTransportWS.Giraffe
+open GraphQLTransportWS
 open Microsoft.AspNetCore.Server.Kestrel.Core
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.Configuration
@@ -23,7 +25,9 @@ open System
 open System.Text.Json
 
 type Startup private () =
-    let graphqlEndpointUrl = "/graphql"
+    // Factory for object holding request-wide info. You define Root somewhere else.
+    let rootFactory () : Root =
+        { RequestId = Guid.NewGuid().ToString() }
 
     new (configuration: IConfiguration) as this =
         Startup() then
@@ -32,33 +36,26 @@ type Startup private () =
     member _.ConfigureServices(services: IServiceCollection) =
         services.AddGiraffe()
                 .Configure(Action<KestrelServerOptions>(fun x -> x.AllowSynchronousIO <- true))
-                .Configure(Action<IISServerOptions>(fun x -> x.AllowSynchronousIO <- true))
+                .AddGraphQLTransportWS<Root>( // STEP 1: Setting the options
+                    Schema.executor,
+                    rootFactory,
+                    "/ws" // --> endpoint for websocket connections
+                )
         |> ignore
 
-        services.AddSingleton(Schema.executor) |> ignore
-
-        // STEP 1: Setting the options
-        services.AddSingleton<GraphQLTransportWS.GraphQLWebsocketMiddlewareOptions<Root>>(implementationInstance =
-             {
-                SchemaExecutor = Schema.executor // --> `Schema.executor` you define somewhere else as usual with FSharp.Data.GraphQL -- check out the "samples/" folder for an example
-                RootFactory = fun () -> { RequestId = Guid.NewGuid().ToString() }
-                EndpointUrl = graphqlEndpointUrl
-                ConnectionInitTimeoutInMs = 3000
-                CustomPingHandler = None
-             }
-        )
-        |> ignore
-
-    member _.Configure(app: IApplicationBuilder, applicationLifetime : IHostApplicationLifetime) =
+    member _.Configure(app: IApplicationBuilder, applicationLifetime : IHostApplicationLifetime, loggerFactory : ILoggerFactory) =
         let errorHandler (ex : Exception) (log : ILogger) =
             log.LogError(EventId(), ex, "An unhandled exception has occurred while executing the request.")
             clearResponse >=> setStatusCode 500
         app
-            .UsePathBase(graphqlEndpointUrl)
             .UseGiraffeErrorHandler(errorHandler)
             .UseWebSockets()
-            .UseMiddleware<GraphQLTransportWS.GraphQLWebSocketMiddleware<Root>>() // STEP 2: using the middleware
-            .UseGiraffe (HttpHandlers.webApp applicationLifetime.ApplicationStopping) // --> `HttpHandlers.webApp` you define somewhere else as usual with Giraffe (and FSharp.Data.GraphQL) -- check out the "samples/" folder for an example
+            .UseWebSocketsForGraphQL<Root>() // STEP 2: using the GraphQL websocket middleware
+            .UseGiraffe
+                (HttpHandlers.handleGraphQL<Root>
+                    applicationLifetime.ApplicationStopping
+                    (loggerFactory.CreateLogger("HttpHandlers.handlerGraphQL"))
+                )
 
     member val Configuration : IConfiguration = null with get, set
 

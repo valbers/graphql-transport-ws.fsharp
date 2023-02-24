@@ -28,13 +28,11 @@ type Startup private () =
     member _.ConfigureServices(services: IServiceCollection) =
         services.AddGiraffe()
                 .Configure(Action<KestrelServerOptions>(fun x -> x.AllowSynchronousIO <- true))
-                .Configure(Action<IISServerOptions>(fun x -> x.AllowSynchronousIO <- true))
-        |> ignore
-
-        services.AddGraphQLTransportWS<Root>(
-            executor = Schema.executor,
-            rootFactory = rootFactory,
-            endpointUrl = graphqlEndpointUrl)
+                .AddGraphQLTransportWS<Root>(
+                    Schema.executor,
+                    rootFactory,
+                    "/ws"
+                )
         |> ignore
 
     member _.Configure(app: IApplicationBuilder, applicationLifetime : IHostApplicationLifetime, loggerFactory : ILoggerFactory) =
@@ -44,14 +42,12 @@ type Startup private () =
         app
             .UseGiraffeErrorHandler(errorHandler)
             .UseWebSockets()
-            .UseMiddleware<GraphQLWebSocketMiddleware<Root>>()
+            .UseWebSocketsForGraphQL<Root>()
             .UseGiraffe
                 ( setCorsHeaders
-                  >=> HttpHandlers.handleGraphQL
+                  >=> (HttpHandlers.handleGraphQL<Root>
                             applicationLifetime.ApplicationStopping
-                            (loggerFactory.CreateLogger("HttpHandlers.handlerGraphQL"))
-                            Schema.executor
-                            rootFactory
+                            (loggerFactory.CreateLogger("HttpHandlers.handlerGraphQL")))
                 )
 
     member val Configuration : IConfiguration = null with get, set

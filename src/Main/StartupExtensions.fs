@@ -1,8 +1,9 @@
 namespace GraphQLTransportWS
 
-open System.Runtime.CompilerServices
-open Microsoft.Extensions.DependencyInjection
 open FSharp.Data.GraphQL
+open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.DependencyInjection
+open System.Runtime.CompilerServices
 open System.Text.Json
 
 [<Extension>]
@@ -31,3 +32,8 @@ type ServiceCollectionExtensions() =
       extraConfiguration : GraphQLTransportWSOptions<'Root> -> GraphQLTransportWSOptions<'Root>
     ) =
     this.AddSingleton<GraphQLTransportWSOptions<'Root>>(createStandardOptions executor rootFactory endpointUrl |> extraConfiguration)
+
+  [<Extension>]
+  static member UseWebSocketsForGraphQL<'Root>(this : IApplicationBuilder) =
+    this.UseMiddleware<GraphQLWebSocketMiddleware<'Root>>()
+

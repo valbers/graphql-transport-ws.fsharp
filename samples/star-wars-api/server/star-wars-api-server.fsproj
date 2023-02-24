@@ -17,7 +17,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\src\Main\Main.fsproj" />
     <ProjectReference Include="..\..\..\src\Giraffe\Giraffe.fsproj" />
   </ItemGroup>
 

@@ -39,7 +39,7 @@ module Program =
         app
             .UseGiraffeErrorHandler(errorHandler)
             .UseWebSockets()
-            .UseMiddleware<GraphQLWebSocketMiddleware<Root>>()
+            .UseWebSocketsForGraphQL<Root>()
             .UseGiraffe
                 (HttpHandlers.handleGraphQL<Root>
                     applicationLifetime.ApplicationStopping
