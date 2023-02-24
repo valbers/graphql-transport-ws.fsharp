@@ -89,7 +89,7 @@ module HttpHandlers =
                 let executor = options.SchemaExecutor
                 let rootFactory = options.RootFactory
                 let serializerOptions = options.SerializerOptions
-                let! graphqlRequestDeserializationResult =
+                let deserializeGraphQLRequest () =
                     try
                         JsonSerializer.DeserializeAsync<GraphQLRequest>(
                             ctx.Request.Body,
@@ -111,46 +111,53 @@ module HttpHandlers =
                                 prepareGenericErrors ["subscriptions are not supported here (use the websocket endpoint instead)."]
                             return! httpOk cancellationToken serializerOptions error next ctx
                     }
-
-                match graphqlRequestDeserializationResult with
-                | Failure errMsgs ->
-                    return! httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
-                | Success (graphqlRequest, _) ->
-                    match graphqlRequest.Query with
-                    | None ->
-                        let! result = executor.AsyncExecute (Introspection.IntrospectionQuery) |> Async.StartAsTask
-                        if logger.IsEnabled(LogLevel.Debug) then
-                            logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
-                        else
-                            ()
-                        return! result |> applyPlanExecutionResult
-                    | Some queryAsStr ->
-                        let graphQLQueryDecodingResult =
-                            queryAsStr
-                            |> GraphQLQueryDecoding.decodeGraphQLQuery
-                                serializerOptions
-                                executor
-                                graphqlRequest.OperationName
-                                graphqlRequest.Variables
-                        match graphQLQueryDecodingResult with
-                        | Failure errMsgs ->
-                            return!
-                                httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
-                        | Success (query, _) ->
-                            if logger.IsEnabled(LogLevel.Debug) then
-                                logger.LogDebug(sprintf "Received query: %A" query)
-                            else
-                                ()
-                            let root = rootFactory()
-                            let! result =
-                                executor.AsyncExecute(
-                                    query.ExecutionPlan,
-                                    data = root,
-                                    variables = query.Variables
-                                )|> Async.StartAsTask
+                if ctx.Request.Headers.ContentLength.GetValueOrDefault(0) = 0 then
+                    let! result = executor.AsyncExecute (Introspection.IntrospectionQuery) |> Async.StartAsTask
+                    if logger.IsEnabled(LogLevel.Debug) then
+                        logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
+                    else
+                        ()
+                    return! result |> applyPlanExecutionResult
+                else
+                    match! deserializeGraphQLRequest() with
+                    | Failure errMsgs ->
+                        return! httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
+                    | Success (graphqlRequest, _) ->
+                        match graphqlRequest.Query with
+                        | None ->
+                            let! result = executor.AsyncExecute (Introspection.IntrospectionQuery) |> Async.StartAsTask
                             if logger.IsEnabled(LogLevel.Debug) then
                                 logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
                             else
                                 ()
                             return! result |> applyPlanExecutionResult
+                        | Some queryAsStr ->
+                            let graphQLQueryDecodingResult =
+                                queryAsStr
+                                |> GraphQLQueryDecoding.decodeGraphQLQuery
+                                    serializerOptions
+                                    executor
+                                    graphqlRequest.OperationName
+                                    graphqlRequest.Variables
+                            match graphQLQueryDecodingResult with
+                            | Failure errMsgs ->
+                                return!
+                                    httpOk cancellationToken serializerOptions (prepareGenericErrors errMsgs) next ctx
+                            | Success (query, _) ->
+                                if logger.IsEnabled(LogLevel.Debug) then
+                                    logger.LogDebug(sprintf "Received query: %A" query)
+                                else
+                                    ()
+                                let root = rootFactory()
+                                let! result =
+                                    executor.AsyncExecute(
+                                        query.ExecutionPlan,
+                                        data = root,
+                                        variables = query.Variables
+                                    )|> Async.StartAsTask
+                                if logger.IsEnabled(LogLevel.Debug) then
+                                    logger.LogDebug(sprintf "Result metadata: %A" result.Metadata)
+                                else
+                                    ()
+                                return! result |> applyPlanExecutionResult
         }
