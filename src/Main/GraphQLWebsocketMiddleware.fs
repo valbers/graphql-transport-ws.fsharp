@@ -55,7 +55,7 @@ type GraphQLWebSocketMiddleware<'Root>(next : RequestDelegate, applicationLifeti
         with
         | :? InvalidMessageException as e ->
           return
-            fail <| InvalidMessage(4400, e.ToString())
+            fail <| InvalidMessage(4400, e.Message.ToString())
         | :? JsonException as e ->
           if logger.IsEnabled(LogLevel.Debug) then
             logger.LogDebug(e.ToString())
